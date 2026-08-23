@@ -1,0 +1,12 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: curiosity-on-demand
+    env_file:
+      - .env
+    volumes:
+      - ./storage:/app/storage
+      - ./client_secrets.json:/app/client_secrets.json:ro
+    restart: unless-stopped
