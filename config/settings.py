@@ -1,9 +1,11 @@
 """Application configuration and environment settings."""
 
+import json
 from functools import lru_cache
 from pathlib import Path
+from typing import Any
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -32,10 +34,15 @@ class Settings(BaseSettings):
         alias="RESEARCH_MODEL",
         description="Gemini model for research and verification with search grounding",
     )
-    gemini_temperature: float = Field(
-        default=0.7,
-        alias="GEMINI_TEMPERATURE",
-        description="Sampling temperature for creative tasks",
+    tts_model: str = Field(
+        default="gemini-2.0-flash",
+        alias="TTS_MODEL",
+        description="Gemini model for text-to-speech narration synthesis",
+    )
+    tts_voice: str = Field(
+        default="random",
+        alias="TTS_VOICE",
+        description="Gemini voice name for speech synthesis (e.g. random, Puck, Charon, Kore, Fenrir, Zephyr)",
     )
 
     # Telegram Bot Configuration
@@ -44,18 +51,46 @@ class Settings(BaseSettings):
         alias="TELEGRAM_BOT_TOKEN",
         description="Telegram bot authentication token",
     )
-    telegram_allowed_users: list[int] = Field(
+    telegram_allowed_users: str | list[str | int] = Field(
         default_factory=list,
         alias="TELEGRAM_ALLOWED_USERS",
-        description="Optional list of Telegram user IDs permitted to trigger pipeline",
+        description="Optional list of Telegram user IDs or usernames permitted to trigger pipeline",
     )
 
-    # Google Cloud & YouTube Configuration
-    google_application_credentials: str | None = Field(
-        default=None,
-        alias="GOOGLE_APPLICATION_CREDENTIALS",
-        description="Path to GCP Service Account JSON key (for Google Cloud TTS)",
-    )
+    @field_validator("telegram_allowed_users", mode="after")
+    @classmethod
+    def _parse_allowed_users(cls, v: Any) -> list[str | int]:
+        if not v:
+            return []
+        if isinstance(v, str):
+            v = v.strip()
+            if not v:
+                return []
+            if v.startswith("[") and v.endswith("]"):
+                try:
+                    parsed = json.loads(v)
+                    if isinstance(parsed, list):
+                        return [
+                            int(x) if str(x).isdigit() else str(x).strip().lstrip("@")
+                            for x in parsed
+                        ]
+                except json.JSONDecodeError:
+                    pass
+            parts = [p.strip() for p in v.split(",") if p.strip()]
+            return [int(x) if x.isdigit() else x.lstrip("@") for x in parts]
+        if isinstance(v, (list, tuple, set)):
+            res: list[str | int] = []
+            for item in v:
+                if isinstance(item, int):
+                    res.append(item)
+                elif isinstance(item, str) and item.isdigit():
+                    res.append(int(item))
+                elif isinstance(item, str) and item.strip():
+                    res.append(item.strip().lstrip("@"))
+            return res
+        return []
+
+    # YouTube Configuration (OAuth2 Client)
     youtube_client_secrets_file: Path = Field(
         default=Path("client_secrets.json"),
         alias="YOUTUBE_CLIENT_SECRETS_FILE",

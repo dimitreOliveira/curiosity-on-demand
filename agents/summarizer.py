@@ -62,7 +62,6 @@ class SummarizerAgent(BaseAgent):
             prompt=prompt,
             response_schema=PitchSummary,
             system_instruction=SUMMARIZER_SYSTEM_PROMPT,
-            temperature=0.7,
         )
 
         if user_feedback:

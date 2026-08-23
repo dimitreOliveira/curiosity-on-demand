@@ -1,5 +1,7 @@
 """Unit and integration tests for media engines and external services."""
 
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
 
 from core.models import AspectRatio
@@ -11,11 +13,60 @@ from services.youtube_publisher import YouTubePublisher
 
 
 @pytest.mark.asyncio
+async def test_audio_engine_gemini_tts_mocked(
+    mock_settings, sample_video_script, tmp_path
+):
+    """Test AudioEngine synthesis using mocked Gemini audio response."""
+    audio_engine = AudioEngine(settings=mock_settings)
+    scene_1 = sample_video_script.scenes[0]
+
+    # Create dummy 16-bit PCM audio (24000 samples = 1 second at 24kHz)
+    dummy_pcm = b"\x00\x00" * 24000
+
+    mock_resp = MagicMock()
+    mock_part = MagicMock()
+    mock_part.inline_data.data = dummy_pcm
+    mock_part.inline_data.mime_type = "audio/pcm;rate=24000"
+
+    mock_candidate = MagicMock()
+    mock_candidate.content.parts = [mock_part]
+    mock_resp.candidates = [mock_candidate]
+
+    audio_engine.client.aio.models.generate_content = AsyncMock(return_value=mock_resp)
+
+    updated_scene = await audio_engine.synthesize_scene(
+        scene=scene_1,
+        output_dir=tmp_path / "audio",
+    )
+
+    assert updated_scene.audio_path is not None
+    assert updated_scene.audio_path.endswith(".wav")
+    assert (tmp_path / "audio").exists()
+    assert updated_scene.duration_seconds >= 1.0
+
+
+def test_audio_engine_voice_selection(mock_settings):
+    """Test voice selection logic when configured or random."""
+    mock_settings.tts_voice = "random"
+    audio_engine = AudioEngine(settings=mock_settings)
+
+    voice_1 = audio_engine.get_voice()
+    assert voice_1 is not None and len(voice_1) > 0
+
+    # Specific voice overrides random setting
+    voice_2 = audio_engine.get_voice("Charon")
+    assert voice_2 == "Charon"
+
+
+@pytest.mark.asyncio
 async def test_audio_engine_synthesize_fallback(
     mock_settings, sample_video_script, tmp_path
 ):
-    """Test AudioEngine fallback synthesis and batch duration updates."""
+    """Test AudioEngine fallback synthesis when Gemini API call fails."""
     audio_engine = AudioEngine(settings=mock_settings)
+    audio_engine.client.aio.models.generate_content = AsyncMock(
+        side_effect=RuntimeError("API Network Error")
+    )
     scene_1 = sample_video_script.scenes[0]
 
     updated_scene = await audio_engine.synthesize_scene(
@@ -63,6 +114,17 @@ async def test_video_assembler_render_and_concat(
     """Test VideoAssembler rendering scene clips and concatenating master video."""
     animator = SvgAnimator(settings=mock_settings)
     audio_engine = AudioEngine(settings=mock_settings)
+
+    # Mock audio generation response to prevent any real API network call
+    mock_resp = MagicMock()
+    mock_part = MagicMock()
+    mock_part.inline_data.data = b"\x00\x00" * 24000
+    mock_part.inline_data.mime_type = "audio/pcm;rate=24000"
+    mock_candidate = MagicMock()
+    mock_candidate.content.parts = [mock_part]
+    mock_resp.candidates = [mock_candidate]
+    audio_engine.client.aio.models.generate_content = AsyncMock(return_value=mock_resp)
+
     assembler = VideoAssembler(settings=mock_settings)
 
     scene = sample_video_script.scenes[0]
@@ -107,12 +169,15 @@ async def test_youtube_publisher_simulation(mock_settings, tmp_path):
 
 @pytest.mark.asyncio
 async def test_telegram_bot_authorization(mock_settings, memory_db):
-    """Test TelegramBotService authorization check."""
-    mock_settings.telegram_allowed_users = [999]
+    """Test TelegramBotService authorization check with user ID and username."""
+    mock_settings.telegram_allowed_users = [999, "dimitreoliveira"]
     bot_service = TelegramBotService(settings=mock_settings, db=memory_db)
 
     assert bot_service._is_user_authorized(999) is True
+    assert bot_service._is_user_authorized(None, username="dimitreoliveira") is True
+    assert bot_service._is_user_authorized(None, username="@dimitreoliveira") is True
     assert bot_service._is_user_authorized(123) is False
+    assert bot_service._is_user_authorized(123, username="otheruser") is False
 
 
 @pytest.mark.asyncio

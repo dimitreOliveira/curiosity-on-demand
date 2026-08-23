@@ -18,6 +18,28 @@ from core.models import (
 )
 
 
+@pytest.fixture(autouse=True)
+def prevent_unmocked_api_calls(monkeypatch):
+    """Guard fixture ensuring no real Gemini API network calls are ever made in tests."""
+
+    async def forbidden_async_call(*args, **kwargs):
+        raise RuntimeError(
+            "Forbidden unmocked async Gemini API call attempted during test suite execution!"
+        )
+
+    def forbidden_sync_call(*args, **kwargs):
+        raise RuntimeError(
+            "Forbidden unmocked sync Gemini API call attempted during test suite execution!"
+        )
+
+    monkeypatch.setattr(
+        "google.genai.models.AsyncModels.generate_content", forbidden_async_call
+    )
+    monkeypatch.setattr(
+        "google.genai.models.Models.generate_content", forbidden_sync_call
+    )
+
+
 @pytest.fixture
 def mock_settings(tmp_path):
     """Provide a test Settings instance with temporary directories."""

@@ -46,8 +46,8 @@ Curiosity On Demand is an automated, end-to-end video creation pipeline orchestr
 |                                                                                            |
 |   +-------------------+          +------------------+          +-----------------------+   |
 |   |  Voice TTS Engine |          |   SVG Animator   |          |    Video Assembler    |   |
-|   | (Google Cloud TTS |          |    (CairoSVG +   | -------> |     (FFmpeg Multi-    |   |
-|   |   / Gemini Audio) |          |  Pillow Frames)  |          |     Track Stitcher)   |   |
+|   |    (Gemini TTS    |          |    (CairoSVG +   | -------> |     (FFmpeg Multi-    |   |
+|   |  google-genai SDK)|          |  Pillow Frames)  |          |     Track Stitcher)   |   |
 |   +---------+---------+          +--------+---------+          +-----------+-----------+   |
 |             |                             |                                |               |
 |             +-----------------------------+                                v               |
