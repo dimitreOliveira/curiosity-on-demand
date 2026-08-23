@@ -59,7 +59,6 @@ class VerifierAgent(BaseAgent):
             prompt=prompt,
             response_schema=VerificationResult,
             system_instruction=VERIFIER_SYSTEM_PROMPT,
-            temperature=0.2,
         )
 
         # Force completion if maximum allowable iterations have been reached

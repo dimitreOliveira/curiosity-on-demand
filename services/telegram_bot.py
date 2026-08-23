@@ -58,12 +58,17 @@ class TelegramBotService:
         self._pending_revisions: dict[int, str] = {}
         self.app: Application | None = None
 
-    def _is_user_authorized(self, user_id: int) -> bool:
+    def _is_user_authorized(
+        self, user_id: int | str | None, username: str | None = None
+    ) -> bool:
         """Check if user is permitted to interact with the bot."""
         allowed = self.settings.telegram_allowed_users
         if not allowed:
             return True
-        return user_id in allowed
+        allowed_str = [str(x).lower().lstrip("@") for x in allowed]
+        if user_id is not None and str(user_id) in allowed_str:
+            return True
+        return bool(username and username.lower().lstrip("@") in allowed_str)
 
     async def build_application(self) -> Application:
         """Build and configure the python-telegram-bot Application."""
@@ -101,7 +106,9 @@ class TelegramBotService:
         """Handle /start command."""
         if not update.effective_user or not update.effective_chat:
             return
-        if not self._is_user_authorized(update.effective_user.id):
+        if not self._is_user_authorized(
+            update.effective_user.id, update.effective_user.username
+        ):
             await update.effective_chat.send_message(
                 "⛔ You are not authorized to use this bot."
             )
@@ -199,7 +206,9 @@ class TelegramBotService:
             or not update.message.text
         ):
             return
-        if not self._is_user_authorized(update.effective_user.id):
+        if not self._is_user_authorized(
+            update.effective_user.id, update.effective_user.username
+        ):
             await update.effective_chat.send_message("⛔ You are not authorized.")
             return
 

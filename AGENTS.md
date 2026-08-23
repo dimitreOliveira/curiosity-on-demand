@@ -5,7 +5,7 @@ Curiosity On Demand is an automated, end-to-end video creation pipeline controll
 
 ## Tech Stack & Structure (The WHAT)
 - **Language & Runtime:** Python 3.12+, AsyncIO.
-- **AI & TTS:** Google GenAI SDK (Gemini / with Google Search Grounding), Google Cloud Text-to-Speech.
+- **AI & TTS:** Google GenAI SDK (Gemini with Google Search Grounding & Gemini TTS audio synthesis).
 - **Bot & Flow:** `python-telegram-bot` (v20+ async), custom state machine with SQLite/SQLAlchemy.
 - **Media Engine:** CairoSVG, Pillow, FFmpeg (`ffmpeg-python` or `moviepy`).
 - **Publishing:** YouTube Data API v3 (`google-api-python-client`).

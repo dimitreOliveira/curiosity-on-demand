@@ -39,16 +39,12 @@ class BaseAgent:
         prompt: str,
         system_instruction: str | None = None,
         tools: list[types.Tool] | None = None,
-        temperature: float | None = None,
         model: str | None = None,
     ) -> str:
         """Generate unstructured text from Gemini."""
         target_model = model or self.model_name
         config = types.GenerateContentConfig(
             system_instruction=system_instruction,
-            temperature=temperature
-            if temperature is not None
-            else self.settings.gemini_temperature,
             tools=tools,
         )
 
@@ -72,16 +68,12 @@ class BaseAgent:
         response_schema: type[T],
         system_instruction: str | None = None,
         tools: list[types.Tool] | None = None,
-        temperature: float | None = None,
         model: str | None = None,
     ) -> T:
         """Generate strongly-typed structured output validated against a Pydantic schema."""
         target_model = model or self.model_name
         config = types.GenerateContentConfig(
             system_instruction=system_instruction,
-            temperature=temperature
-            if temperature is not None
-            else self.settings.gemini_temperature,
             response_mime_type="application/json",
             response_schema=response_schema,
             tools=tools,

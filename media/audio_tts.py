@@ -1,141 +1,253 @@
-"""Audio narration synthesis engine using Google Cloud TTS with robust fallbacks."""
+"""Audio narration synthesis engine using Gemini TTS via Google GenAI SDK."""
 
 import asyncio
 import logging
 import math
-import os
+import mimetypes
+import random
 import struct
 import wave
 from pathlib import Path
 
-from google.api_core.exceptions import GoogleAPIError
-from google.auth.exceptions import GoogleAuthError
+from google import genai
+from google.genai import types
 
 from config.settings import Settings, get_settings
 from core.models import Scene, VideoScript
 
 logger = logging.getLogger(__name__)
 
+# Complete list of prebuilt voices supported by the Gemini TTS models
+AVAILABLE_TTS_VOICES: list[str] = [
+    "Zephyr",
+    "Puck",
+    "Charon",
+    "Kore",
+    "Fenrir",
+    "Leda",
+    "Orus",
+    "Aoede",
+    "Callirrhoe",
+    "Autonoe",
+    "Enceladus",
+    "Iapetus",
+    "Umbriel",
+    "Algieba",
+    "Despina",
+    "Erinome",
+    "Algenib",
+    "Rasalgethi",
+    "Laomedeia",
+    "Achernar",
+    "Alnilam",
+    "Schedar",
+    "Gacrux",
+    "Pulcherrima",
+    "Achird",
+    "Zubenelgenubi",
+    "Vindemiatrix",
+    "Sadachbia",
+    "Sadaltager",
+    "Sulafat",
+]
+
+
+def parse_audio_mime_type(mime_type: str) -> dict[str, int]:
+    """Parse bits per sample and sample rate from an audio MIME type string."""
+    bits_per_sample = 16
+    rate = 24000
+
+    parts = mime_type.split(";")
+    for param in parts:
+        param = param.strip()
+        if param.lower().startswith("rate="):
+            try:
+                rate = int(param.split("=", 1)[1])
+            except (ValueError, IndexError):
+                pass
+        elif "audio/l" in param.lower():
+            try:
+                # E.g. audio/L16 or audio/L24
+                bits_per_sample = int(param.lower().split("audio/l", 1)[1])
+            except (ValueError, IndexError):
+                pass
+
+    return {"bits_per_sample": bits_per_sample, "rate": rate}
+
+
+def convert_to_wav(audio_data: bytes, mime_type: str) -> bytes:
+    """Generate a standard RIFF WAV container header for raw PCM audio data."""
+    params = parse_audio_mime_type(mime_type)
+    bits_per_sample = params["bits_per_sample"]
+    sample_rate = params["rate"]
+    num_channels = 1
+    data_size = len(audio_data)
+    bytes_per_sample = bits_per_sample // 8
+    block_align = num_channels * bytes_per_sample
+    byte_rate = sample_rate * block_align
+    chunk_size = 36 + data_size
+
+    header = struct.pack(
+        "<4sI4s4sIHHIIHH4sI",
+        b"RIFF",
+        chunk_size,
+        b"WAVE",
+        b"fmt ",
+        16,  # Subchunk1Size (16 for PCM)
+        1,  # AudioFormat (1 for PCM)
+        num_channels,
+        sample_rate,
+        byte_rate,
+        block_align,
+        bits_per_sample,
+        b"data",
+        data_size,
+    )
+    return header + audio_data
+
 
 class AudioEngine:
-    """Handles voiceover narration synthesis for video scenes."""
+    """Handles voiceover narration synthesis using Gemini TTS."""
 
     def __init__(self, settings: Settings | None = None):
         self.settings = settings or get_settings()
-        self._tts_client = None
 
-    def _get_tts_client(self):
-        """Lazy-initialize Google Cloud TextToSpeechClient."""
-        if self._tts_client is None:
-            try:
-                from google.cloud import texttospeech
+        if self.settings.gemini_api_key:
+            self.client = genai.Client(api_key=self.settings.gemini_api_key)
+        else:
+            self.client = genai.Client()
 
-                # If GOOGLE_APPLICATION_CREDENTIALS points to a file, set environ
-                if self.settings.google_application_credentials:
-                    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = (
-                        self.settings.google_application_credentials
-                    )
+    def get_voice(self, voice_name: str | None = None) -> str:
+        """Select a specified voice or pick one randomly for the creation."""
+        candidate = voice_name or self.settings.tts_voice
+        if not candidate or candidate.strip().lower() in ("random", "auto"):
+            return random.choice(AVAILABLE_TTS_VOICES)
+        return candidate
 
-                self._tts_client = texttospeech.TextToSpeechClient()
-                logger.info("Initialized Google Cloud TextToSpeechClient")
-            except (
-                ImportError,
-                GoogleAPIError,
-                GoogleAuthError,
-                OSError,
-                ValueError,
-                RuntimeError,
-            ) as e:
-                logger.warning(
-                    "Google Cloud TTS client could not be initialized (%s). Using fallback audio synthesizer.",
-                    e,
-                )
-                self._tts_client = None
-        return self._tts_client
+    def _build_tts_prompt(self, scene: Scene) -> str:
+        """Build structured director's prompt for steering Gemini TTS tone and pacing."""
+        scene_context = (
+            scene.visual_description
+            if scene.visual_description
+            else "A clear explanatory documentary scene."
+        )
+
+        return (
+            "Read the following transcript based on the audio profile and director's note.\n\n"
+            "# Audio Profile\n"
+            "An articulate, engaging, and authoritative documentary narrator.\n\n"
+            "# Director's note\n"
+            "Style: Professional, clear articulation, captivating broadcast cadence. "
+            "Pace: Natural, liquid, measured with deliberate pauses at transitions. "
+            "Accent: American (Standard).\n\n"
+            f"## Scene Context:\n{scene_context}\n\n"
+            f"## Transcript:\n{scene.narration}"
+        )
 
     async def synthesize_scene(
         self,
         scene: Scene,
         output_dir: Path,
-        voice_name: str = "en-US-Neural2-F",
-        speaking_rate: float = 1.05,
+        voice_name: str | None = None,
+        model_name: str | None = None,
     ) -> Scene:
-        """Synthesize narration audio for an individual scene and update its duration."""
+        """Synthesize narration audio for an individual scene using Gemini TTS."""
         output_dir.mkdir(parents=True, exist_ok=True)
-        audio_file = output_dir / f"scene_{scene.scene_id}_narration.mp3"
         wav_file = output_dir / f"scene_{scene.scene_id}_narration.wav"
+        mp3_file = output_dir / f"scene_{scene.scene_id}_narration.mp3"
 
+        voice = self.get_voice(voice_name)
+        model = model_name or self.settings.tts_model
+
+        try:
+            config = types.GenerateContentConfig(
+                temperature=1.0,
+                response_modalities=["AUDIO"],
+                speech_config=types.SpeechConfig(
+                    voice_config=types.VoiceConfig(
+                        prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                            voice_name=voice
+                        )
+                    )
+                ),
+            )
+
+            prompt = self._build_tts_prompt(scene)
+
+            response = await self.client.aio.models.generate_content(
+                model=model,
+                contents=prompt,
+                config=config,
+            )
+
+            audio_chunks: list[bytes] = []
+            mime_type = "audio/pcm;rate=24000"
+
+            if response and response.candidates:
+                candidate = response.candidates[0]
+                if candidate.content and candidate.content.parts:
+                    for part in candidate.content.parts:
+                        if part.inline_data and part.inline_data.data:
+                            audio_chunks.append(part.inline_data.data)
+                            if part.inline_data.mime_type:
+                                mime_type = part.inline_data.mime_type
+
+            if audio_chunks:
+                audio_bytes = b"".join(audio_chunks)
+                extension = mimetypes.guess_extension(mime_type)
+
+                if extension == ".mp3" or "mp3" in mime_type.lower():
+                    mp3_file.write_bytes(audio_bytes)
+                    words_count = len(scene.narration.split())
+                    duration = max(2.5, words_count / 2.4)
+                    scene.audio_path = str(mp3_file)
+                else:
+                    # Treat as raw PCM or WAV
+                    if "pcm" in mime_type.lower() or "audio/l" in mime_type.lower():
+                        wav_data = convert_to_wav(audio_bytes, mime_type)
+                    else:
+                        wav_data = audio_bytes
+
+                    wav_file.write_bytes(wav_data)
+
+                    try:
+                        with wave.open(str(wav_file), "rb") as wf:
+                            duration = wf.getnframes() / float(wf.getframerate())
+                    except (wave.Error, OSError, EOFError):
+                        words_count = len(scene.narration.split())
+                        duration = max(2.5, words_count / 2.4)
+
+                    scene.audio_path = str(wav_file)
+
+                scene.duration_seconds = max(2.5, round(duration, 2))
+                logger.info(
+                    "Synthesized scene %d narration with Gemini TTS ('%s') -> %s (%.2fs)",
+                    scene.scene_id,
+                    voice,
+                    Path(scene.audio_path).name,
+                    scene.duration_seconds,
+                )
+                return scene
+
+            logger.warning(
+                "Gemini TTS returned no audio data for scene %d. Falling back to synthetic audio.",
+                scene.scene_id,
+            )
+
+        except Exception as err:  # noqa: BLE001
+            logger.warning(
+                "Gemini TTS synthesis failed for scene %d: %s. Using fallback audio synthesizer.",
+                scene.scene_id,
+                err,
+            )
+
+        # Fallback synthesizer: Generate clean synthetic audio tone WAV
         duration = await asyncio.to_thread(
-            self._synthesize_sync,
-            scene.narration,
-            audio_file,
-            wav_file,
-            voice_name,
-            speaking_rate,
+            self._generate_fallback_wav, scene.narration, wav_file
         )
-
-        scene.audio_path = str(audio_file if audio_file.exists() else wav_file)
+        scene.audio_path = str(wav_file)
         scene.duration_seconds = max(2.5, round(duration, 2))
         return scene
-
-    def _synthesize_sync(
-        self,
-        text: str,
-        mp3_path: Path,
-        wav_fallback_path: Path,
-        voice_name: str,
-        speaking_rate: float,
-    ) -> float:
-        """Synchronous synthesis implementation dispatched to worker thread."""
-        client = self._get_tts_client()
-
-        if client:
-            try:
-                from google.cloud import texttospeech
-
-                synthesis_input = texttospeech.SynthesisInput(text=text)
-                voice = texttospeech.VoiceSelectionParams(
-                    language_code="en-US",
-                    name=voice_name,
-                )
-                audio_config = texttospeech.AudioConfig(
-                    audio_encoding=texttospeech.AudioEncoding.MP3,
-                    speaking_rate=speaking_rate,
-                )
-
-                response = client.synthesize_speech(
-                    input=synthesis_input,
-                    voice=voice,
-                    audio_config=audio_config,
-                )
-
-                with open(mp3_path, "wb") as out:
-                    out.write(response.audio_content)
-
-                # Estimate duration from words or MP3 file size
-                words_count = len(text.split())
-                duration = max(2.5, (words_count / (2.4 * speaking_rate)))
-                logger.info(
-                    "Synthesized %d words with GCP TTS to %s (approx %.1fs)",
-                    words_count,
-                    mp3_path.name,
-                    duration,
-                )
-                return duration
-            except (
-                GoogleAPIError,
-                GoogleAuthError,
-                OSError,
-                RuntimeError,
-                ValueError,
-            ) as err:
-                logger.warning(
-                    "GCP TTS synthesis failed: %s. Falling back to synthetic audio generation.",
-                    err,
-                )
-
-        # Fallback synthesizer: Generate clean synthetic audio tone/silence WAV
-        return self._generate_fallback_wav(text, wav_fallback_path)
 
     def _generate_fallback_wav(self, text: str, output_wav: Path) -> float:
         """Generate a valid WAV audio file proportional to narration text length."""
@@ -154,7 +266,6 @@ class AudioEngine:
             audio_bytes = bytearray()
             for i in range(num_samples):
                 t = i / sample_rate
-                # Soft 220Hz harmonic with modulation
                 val = int(
                     math.sin(2 * math.pi * 220 * t)
                     * 1500
@@ -176,12 +287,24 @@ class AudioEngine:
         self,
         script: VideoScript,
         project_dir: Path,
+        voice_name: str | None = None,
     ) -> VideoScript:
-        """Synthesize all scene voiceovers and update script timings."""
+        """Synthesize all scene voiceovers with a consistent chosen voice and update timings."""
         audio_dir = project_dir / "audio"
         audio_dir.mkdir(parents=True, exist_ok=True)
 
-        tasks = [self.synthesize_scene(scene, audio_dir) for scene in script.scenes]
+        chosen_voice = self.get_voice(voice_name)
+        logger.info(
+            "Synthesizing script '%s' (%d scenes) with voice '%s'",
+            script.title,
+            len(script.scenes),
+            chosen_voice,
+        )
+
+        tasks = [
+            self.synthesize_scene(scene, audio_dir, voice_name=chosen_voice)
+            for scene in script.scenes
+        ]
         updated_scenes = await asyncio.gather(*tasks)
 
         script.scenes = list(updated_scenes)

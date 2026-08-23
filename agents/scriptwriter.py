@@ -76,7 +76,6 @@ class ScriptWriterAgent(BaseAgent):
             prompt=prompt,
             response_schema=VideoScript,
             system_instruction=SCRIPTWRITER_SYSTEM_PROMPT,
-            temperature=0.6,
         )
 
         # Post-process: ensure durations and IDs are normalized

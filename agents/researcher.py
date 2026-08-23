@@ -66,7 +66,6 @@ class ResearcherAgent(BaseAgent):
             contents=prompt,
             config=types.GenerateContentConfig(
                 system_instruction=RESEARCHER_SYSTEM_PROMPT,
-                temperature=0.3,  # Lower temperature for accurate factual search
                 tools=[search_tool],
             ),
         )
@@ -114,7 +113,6 @@ class ResearcherAgent(BaseAgent):
             prompt=structuring_prompt,
             response_schema=ResearchReport,
             system_instruction="You are a data structuring assistant. Format research into the exact JSON schema provided.",
-            temperature=0.2,
         )
 
         # Combine with discovered sources and previous findings if this is an iteration
