@@ -6,6 +6,8 @@ from core.models import (
     ProjectSession,
     ResearchReport,
     ResearchSection,
+    Script,
+    ScriptScene,
     WorkflowState,
 )
 from core.state_machine import InvalidStateTransitionError, PipelineStateMachine
@@ -20,6 +22,8 @@ __all__ = [
     "ProjectSession",
     "ResearchReport",
     "ResearchSection",
+    "Script",
+    "ScriptScene",
     "WorkflowState",
     "get_db_manager",
 ]

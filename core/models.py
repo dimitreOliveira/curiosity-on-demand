@@ -8,10 +8,13 @@ from pydantic import BaseModel, Field
 
 
 class WorkflowState(str, Enum):
-    """Execution states for the video research state machine."""
+    """Execution states for the video research and scripting state machine."""
 
     IDLE = "IDLE"
     RESEARCHING = "RESEARCHING"
+    AWAITING_RESEARCH_APPROVAL = "AWAITING_RESEARCH_APPROVAL"
+    SCRIPTING = "SCRIPTING"
+    AWAITING_SCRIPT_APPROVAL = "AWAITING_SCRIPT_APPROVAL"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
 
@@ -53,8 +56,32 @@ class EvaluationResult(BaseModel):
     )
 
 
+class ScriptScene(BaseModel):
+    """A segment or scene in the video narration script."""
+
+    scene_number: int = Field(description="Sequential index of this scene/segment")
+    title: str = Field(description="Title or theme of this scene")
+    summary: str = Field(
+        description="Concise summary of the concept and content in this scene"
+    )
+    narration: str = Field(description="Spoken voiceover narration text for this scene")
+
+
+class Script(BaseModel):
+    """Complete scene-by-scene narration script for a video."""
+
+    topic: str = Field(description="The primary subject of the script")
+    summary: str = Field(
+        description="Overall summary of the narration arc and video structure"
+    )
+    scenes: list[ScriptScene] = Field(
+        default_factory=list,
+        description="Ordered list of script scenes/segments",
+    )
+
+
 class ProjectSession(BaseModel):
-    """Pipeline project session tracking state and research results."""
+    """Pipeline project session tracking state, research, and script results."""
 
     project_id: str = Field(
         default_factory=lambda: str(uuid4()),
@@ -69,8 +96,11 @@ class ProjectSession(BaseModel):
     research_report: ResearchReport | None = Field(
         default=None, description="Researched report and subtopics"
     )
+    script: Script | None = Field(
+        default=None, description="Generated scene-by-scene narration script"
+    )
     error_message: str | None = Field(
-        default=None, description="Error message if research failed"
+        default=None, description="Error message if workflow failed"
     )
     created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
     updated_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())

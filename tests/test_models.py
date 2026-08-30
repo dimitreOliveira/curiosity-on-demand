@@ -64,3 +64,40 @@ def test_evaluation_result_validation(sample_research_report):
     reconstructed = EvaluationResult.model_validate_json(json_str)
     assert reconstructed.is_sufficient is False
     assert reconstructed.report.summary == sample_research_report.summary
+
+
+def test_script_and_scenes_serialization(sample_script):
+    """Test ScriptScene and Script validation and JSON serialization."""
+    from core.models import Script, ScriptScene
+
+    scene = ScriptScene(
+        scene_number=1,
+        title="Intro",
+        summary="Hook",
+        narration="Hello world",
+    )
+    assert scene.scene_number == 1
+    assert scene.title == "Intro"
+
+    json_str = sample_script.model_dump_json()
+    reconstructed = Script.model_validate_json(json_str)
+
+    assert reconstructed.topic == sample_script.topic
+    assert reconstructed.summary == sample_script.summary
+    assert len(reconstructed.scenes) == len(sample_script.scenes)
+    assert reconstructed.scenes[0].narration == sample_script.scenes[0].narration
+
+
+def test_workflow_states():
+    """Test that all required workflow states are present."""
+    expected_states = {
+        "IDLE",
+        "RESEARCHING",
+        "AWAITING_RESEARCH_APPROVAL",
+        "SCRIPTING",
+        "AWAITING_SCRIPT_APPROVAL",
+        "COMPLETED",
+        "FAILED",
+    }
+    actual_states = {s.value for s in WorkflowState}
+    assert expected_states == actual_states

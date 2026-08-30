@@ -44,6 +44,9 @@ class BaseAgent:
         config = types.GenerateContentConfig(
             system_instruction=system_instruction,
             tools=tools,
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(
+                disable=True
+            ),
         )
 
         logger.debug("Generating text with model %s", target_model)
@@ -75,6 +78,9 @@ class BaseAgent:
             response_mime_type="application/json",
             response_schema=response_schema,
             tools=tools,
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(
+                disable=True
+            ),
         )
 
         logger.debug(

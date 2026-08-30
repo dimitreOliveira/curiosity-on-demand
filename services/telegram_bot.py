@@ -1,13 +1,14 @@
-"""Telegram Bot service orchestrating the topic research pipeline."""
+"""Telegram Bot service orchestrating the research and narration script pipeline."""
 
 import asyncio
 import logging
 import re
 
-from telegram import Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message, Update
 from telegram.constants import ParseMode
 from telegram.ext import (
     Application,
+    CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
     MessageHandler,
@@ -16,9 +17,10 @@ from telegram.ext import (
 
 from agents.evaluator import EvaluatorAgent
 from agents.researcher import ResearcherAgent
+from agents.script_writer import ScriptWriterAgent
 from config.settings import Settings, get_settings
 from core.database import DatabaseManager, get_db_manager
-from core.models import ResearchReport, WorkflowState
+from core.models import ResearchReport, Script, WorkflowState
 from core.state_machine import PipelineStateMachine
 
 logger = logging.getLogger(__name__)
@@ -33,7 +35,7 @@ def extract_target_duration(text: str, default_minutes: int = 10) -> str:
 
 
 class TelegramBotService:
-    """Async Telegram Bot orchestrating iterative topic research and evaluation."""
+    """Async Telegram Bot orchestrating research, scripting, and interactive user reviews."""
 
     def __init__(
         self,
@@ -45,6 +47,7 @@ class TelegramBotService:
         self.state_machine = PipelineStateMachine(db=self.db)
         self.researcher = ResearcherAgent(settings=self.settings)
         self.evaluator = EvaluatorAgent(settings=self.settings)
+        self.script_writer = ScriptWriterAgent(settings=self.settings)
         self.app: Application | None = None
 
     def _is_user_authorized(
@@ -74,7 +77,10 @@ class TelegramBotService:
         app.add_handler(CommandHandler("status", self._handle_status))
         app.add_handler(CommandHandler("cancel", self._handle_cancel))
 
-        # Plain Text Message Handler (Topic submission)
+        # Inline Button Callback Handler
+        app.add_handler(CallbackQueryHandler(self._handle_callback_query))
+
+        # Plain Text Message Handler (Topic submission & review feedback)
         app.add_handler(
             MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_message)
         )
@@ -102,9 +108,12 @@ class TelegramBotService:
 
         welcome_text = (
             "✨ *Welcome to Curiosity On Demand!* ✨\n\n"
-            "Send me any topic, question, or curiosity, and our AI research and evaluation "
-            "agents will perform in-depth, fact-checked research to create an educational video.\n\n"
-            "👉 *Send a topic to get started!* (e.g. `How do black holes evaporate? (5 min video)` or `The history of cryptography`)"
+            "Send me any topic or curiosity, and our AI agents will:\n"
+            "1. 🔍 Conduct in-depth, grounded web research.\n"
+            "2. 📋 Present a structured summary for your review and feedback.\n"
+            "3. ✍️ Write a scene-by-scene narration script.\n"
+            "4. 🎬 Let you review and refine the script.\n\n"
+            "👉 *Send a topic to get started!* (e.g. `How do black holes evaporate? (5 min video)`)"
         )
         await update.effective_chat.send_message(
             welcome_text, parse_mode=ParseMode.MARKDOWN
@@ -119,8 +128,9 @@ class TelegramBotService:
         help_text = (
             "📖 *Curiosity On Demand - Help & Commands*\n\n"
             "• Type any topic (with optional target duration like `5 min`) to start research.\n"
-            "• `/status` - Check the status of your active research project.\n"
-            "• `/cancel` - Cancel your ongoing research project.\n"
+            "• When reviewing research or script summaries, click *Approve* or reply with your feedback.\n"
+            "• `/status` - Check the status of your active project.\n"
+            "• `/cancel` - Cancel your ongoing project.\n"
             "• `/help` - Show this guide."
         )
         await update.effective_chat.send_message(
@@ -138,7 +148,7 @@ class TelegramBotService:
         )
         if not active_project:
             await update.effective_chat.send_message(
-                "ℹ️ No active research project found. Send a topic to start one!"
+                "ℹ️ No active project found. Send a topic to start one!"
             )
             return
 
@@ -178,7 +188,7 @@ class TelegramBotService:
     async def _handle_message(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
-        """Handle user topic submission."""
+        """Handle user text messages: topic submissions or review feedback."""
         if (
             not update.effective_user
             or not update.effective_chat
@@ -196,6 +206,48 @@ class TelegramBotService:
         chat_id = update.effective_chat.id
         user_id = update.effective_user.id
 
+        # Check if there is an active project waiting for review or running
+        active_project = await self.db.get_active_project_for_chat(chat_id)
+
+        if active_project:
+            if active_project.state == WorkflowState.AWAITING_RESEARCH_APPROVAL:
+                # User provided feedback on the research summary
+                await update.message.reply_text(
+                    f"📝 *Research feedback received:*\n_{text}_\n\n"
+                    f"🔄 Re-running research & evaluation loop with your feedback...",
+                    parse_mode=ParseMode.MARKDOWN,
+                )
+                asyncio.create_task(
+                    self._run_research_pipeline(
+                        active_project.project_id, user_feedback=text
+                    )
+                )
+                return
+
+            if active_project.state == WorkflowState.AWAITING_SCRIPT_APPROVAL:
+                # User provided feedback on the narration script
+                await update.message.reply_text(
+                    f"📝 *Script feedback received:*\n_{text}_\n\n"
+                    f"✍️ Revising scene-by-scene script with your feedback...",
+                    parse_mode=ParseMode.MARKDOWN,
+                )
+                asyncio.create_task(
+                    self._run_script_pipeline(
+                        active_project.project_id, user_feedback=text
+                    )
+                )
+                return
+
+            if active_project.state in (
+                WorkflowState.RESEARCHING,
+                WorkflowState.SCRIPTING,
+            ):
+                await update.message.reply_text(
+                    "⏳ A task is currently running for your project. Please wait for it to finish or use `/cancel` to abort.",
+                    parse_mode=ParseMode.MARKDOWN,
+                )
+                return
+
         # Start a brand new project session
         session = await self.db.create_project(
             user_id=user_id, chat_id=chat_id, topic=text
@@ -209,7 +261,64 @@ class TelegramBotService:
         # Dispatch research pipeline in background task
         asyncio.create_task(self._run_research_pipeline(session.project_id))
 
-    async def _run_research_pipeline(self, project_id: str) -> None:
+    # ==========================================================================
+    # Callback Query Handlers (Inline Buttons)
+    # ==========================================================================
+
+    async def _handle_callback_query(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Handle inline button clicks for approving research and scripts."""
+        query = update.callback_query
+        if not query or not query.data:
+            return
+
+        await query.answer()
+
+        data = query.data
+        if data.startswith("approve_research:"):
+            project_id = data.split(":", 1)[1]
+            project = await self.db.get_project(project_id)
+            if not project or project.state != WorkflowState.AWAITING_RESEARCH_APPROVAL:
+                if isinstance(query.message, Message):
+                    await query.message.reply_text(
+                        "ℹ️ This research review is no longer active."
+                    )
+                return
+
+            if isinstance(query.message, Message):
+                await query.message.reply_text(
+                    "✅ *Research summary approved!*\n\n✍️ Generating scene-by-scene narration script...",
+                    parse_mode=ParseMode.MARKDOWN,
+                )
+
+            asyncio.create_task(self._run_script_pipeline(project_id))
+
+        elif data.startswith("approve_script:"):
+            project_id = data.split(":", 1)[1]
+            project = await self.db.get_project(project_id)
+            if not project or project.state != WorkflowState.AWAITING_SCRIPT_APPROVAL:
+                if isinstance(query.message, Message):
+                    await query.message.reply_text(
+                        "ℹ️ This script review is no longer active."
+                    )
+                return
+
+            await self.state_machine.transition(project_id, WorkflowState.COMPLETED)
+            if isinstance(query.message, Message):
+                await query.message.reply_text(
+                    "🎉 *Script Approved & Finalized!*\n\n"
+                    "The narration script is ready. All scenes and voiceovers have been saved.",
+                    parse_mode=ParseMode.MARKDOWN,
+                )
+
+    # ==========================================================================
+    # Pipeline Orchestration
+    # ==========================================================================
+
+    async def _run_research_pipeline(
+        self, project_id: str, user_feedback: str | None = None
+    ) -> None:
         """Execute iterative Researcher & Evaluator multi-turn loop."""
         try:
             session = await self.db.get_project(project_id)
@@ -224,7 +333,7 @@ class TelegramBotService:
             max_iterations = max(1, self.settings.max_research_iterations)
 
             accumulated_notes = ""
-            feedback: str | None = None
+            feedback: str | None = user_feedback
             final_report: ResearchReport | None = None
 
             for iteration in range(1, max_iterations + 1):
@@ -240,7 +349,13 @@ class TelegramBotService:
                 round_notes = await self.researcher.conduct_research(
                     topic=session.topic,
                     feedback=feedback,
-                    previous_research=accumulated_notes if accumulated_notes else None,
+                    previous_research=accumulated_notes
+                    if accumulated_notes
+                    else (
+                        session.research_report.summary
+                        if session.research_report
+                        else None
+                    ),
                     target_duration=target_duration,
                 )
 
@@ -293,10 +408,12 @@ class TelegramBotService:
                 )
 
             await self.db.save_research_report(project_id, final_report)
-            await self.state_machine.transition(project_id, WorkflowState.COMPLETED)
+            await self.state_machine.transition(
+                project_id, WorkflowState.AWAITING_RESEARCH_APPROVAL
+            )
 
-            # Send research results to user
-            await self._send_research_results(session.chat_id, final_report)
+            # Send research results and approval buttons to user
+            await self._send_research_results(session.chat_id, final_report, project_id)
 
         except Exception as err:
             logger.exception(
@@ -314,42 +431,147 @@ class TelegramBotService:
                         parse_mode=ParseMode.MARKDOWN,
                     )
 
-    async def _send_research_results(
-        self, chat_id: int, report: ResearchReport
+    async def _send_message_chunks(
+        self,
+        chat_id: int,
+        text: str,
+        reply_markup: InlineKeyboardMarkup | None = None,
     ) -> None:
-        """Send formatted research results to Telegram chat, splitting if necessary."""
+        """Send message to chat, chunking if exceeding Telegram's 4096 character limit."""
         if not self.app:
             return
 
-        # 1. Summary message
-        header_text = (
-            f"📋 *Research Report: {report.topic}*\n\n💡 *Summary:*\n{report.summary}"
+        if len(text) <= 4000:
+            await self.app.bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                reply_markup=reply_markup,
+                parse_mode=ParseMode.MARKDOWN,
+            )
+            return
+
+        chunks = [text[i : i + 4000] for i in range(0, len(text), 4000)]
+        for i, chunk in enumerate(chunks):
+            is_last = i == len(chunks) - 1
+            await self.app.bot.send_message(
+                chat_id=chat_id,
+                text=chunk,
+                reply_markup=reply_markup if is_last else None,
+                parse_mode=ParseMode.MARKDOWN,
+            )
+
+    async def _send_research_results(
+        self, chat_id: int, report: ResearchReport, project_id: str
+    ) -> None:
+        """Send formatted research summary and approval prompt to chat."""
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    "✅ Approve Research",
+                    callback_data=f"approve_research:{project_id}",
+                )
+            ]
+        ]
+        text = (
+            f"📋 *Research Summary: {report.topic}*\n\n"
+            f"💡 *Key Insights & Summary:*\n{report.summary}\n\n"
+            "💬 *Next Steps:*\n"
+            "• Click *Approve Research* below to generate the narration script.\n"
+            "• Or *reply with your feedback* to refine and expand the research."
         )
-        await self.app.bot.send_message(
+        await self._send_message_chunks(
             chat_id=chat_id,
-            text=header_text,
-            parse_mode=ParseMode.MARKDOWN,
+            text=text,
+            reply_markup=InlineKeyboardMarkup(keyboard),
         )
 
-        # 2. Researched subtopics
-        if report.sections:
-            for section in report.sections:
-                section_text = f"📌 *{section.topic}*\n\n{section.content}"
-                # Guard against 4096 character Telegram limits
-                if len(section_text) > 4000:
-                    chunks = [
-                        section_text[i : i + 4000]
-                        for i in range(0, len(section_text), 4000)
-                    ]
-                    for chunk in chunks:
-                        await self.app.bot.send_message(
-                            chat_id=chat_id,
-                            text=chunk,
-                            parse_mode=ParseMode.MARKDOWN,
-                        )
-                else:
+    async def _run_script_pipeline(
+        self, project_id: str, user_feedback: str | None = None
+    ) -> None:
+        """Execute ScriptWriter agent to generate or revise scene-by-scene narration script."""
+        try:
+            session = await self.db.get_project(project_id)
+            if not session or not session.research_report:
+                logger.error(
+                    "Cannot run script pipeline: project or research report missing for %s",
+                    project_id,
+                )
+                return
+
+            await self.state_machine.transition(project_id, WorkflowState.SCRIPTING)
+
+            target_duration = extract_target_duration(
+                session.topic, self.settings.default_video_duration_minutes
+            )
+
+            script = await self.script_writer.generate_script(
+                topic=session.topic,
+                research_report=session.research_report,
+                target_duration=target_duration,
+                feedback=user_feedback,
+                previous_script=session.script,
+            )
+
+            await self.db.save_script(project_id, script)
+            await self.state_machine.transition(
+                project_id, WorkflowState.AWAITING_SCRIPT_APPROVAL
+            )
+
+            # Send script results and approval buttons to user
+            await self._send_script_results(session.chat_id, script, project_id)
+
+        except Exception as err:
+            logger.exception(
+                "Error during script generation for project %s", project_id
+            )
+            await self.state_machine.transition(
+                project_id, WorkflowState.FAILED, error_message=str(err)
+            )
+            if self.app:
+                session = await self.db.get_project(project_id)
+                if session:
                     await self.app.bot.send_message(
-                        chat_id=chat_id,
-                        text=section_text,
+                        chat_id=session.chat_id,
+                        text=f"⚠️ *An error occurred during script generation:*\n`{err}`",
                         parse_mode=ParseMode.MARKDOWN,
                     )
+
+    async def _send_script_results(
+        self, chat_id: int, script: Script, project_id: str
+    ) -> None:
+        """Send formatted script overview, scene summaries, and approval prompt to chat."""
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    "✅ Approve Script",
+                    callback_data=f"approve_script:{project_id}",
+                )
+            ]
+        ]
+
+        parts = [
+            (
+                f"🎬 *Video Script Summary: {script.topic}*\n\n"
+                f"📝 *Overview:*\n{script.summary}"
+            )
+        ]
+
+        if script.scenes:
+            scene_summaries = [
+                f"🎬 *Scene {scene.scene_number}: {scene.title}*\n{scene.summary}"
+                for scene in script.scenes
+            ]
+            parts.append("📋 *Scene Breakdown:*\n\n" + "\n\n".join(scene_summaries))
+
+        parts.append(
+            "💬 *Next Steps:*\n"
+            "• Click *Approve Script* below to finalize the narration script.\n"
+            "• Or *reply with your feedback* to revise scenes or narration."
+        )
+
+        full_text = "\n\n".join(parts)
+        await self._send_message_chunks(
+            chat_id=chat_id,
+            text=full_text,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )

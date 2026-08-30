@@ -7,8 +7,10 @@ from core.state_machine import InvalidStateTransitionError, PipelineStateMachine
 
 
 @pytest.mark.asyncio
-async def test_database_crud_lifecycle(memory_db, sample_research_report):
-    """Test full database lifecycle for creating and updating project state."""
+async def test_database_crud_lifecycle(
+    memory_db, sample_research_report, sample_script
+):
+    """Test full database lifecycle for creating and updating project state, research, and script."""
     # 1. Create project
     project = await memory_db.create_project(
         user_id=100, chat_id=200, topic="Origin of Language"
@@ -23,13 +25,20 @@ async def test_database_crud_lifecycle(memory_db, sample_research_report):
     assert active.project_id == project.project_id
 
     # 3. Save research report
-    updated = await memory_db.save_research_report(
+    updated_res = await memory_db.save_research_report(
         project.project_id, sample_research_report
     )
-    assert updated is not None
-    assert updated.research_report is not None
-    assert updated.research_report.topic == sample_research_report.topic
-    assert len(updated.research_report.sections) == 3
+    assert updated_res is not None
+    assert updated_res.research_report is not None
+    assert updated_res.research_report.topic == sample_research_report.topic
+    assert len(updated_res.research_report.sections) == 3
+
+    # 4. Save script
+    updated_script = await memory_db.save_script(project.project_id, sample_script)
+    assert updated_script is not None
+    assert updated_script.script is not None
+    assert updated_script.script.topic == sample_script.topic
+    assert len(updated_script.script.scenes) == 3
 
 
 @pytest.mark.asyncio
@@ -44,9 +53,37 @@ async def test_state_machine_valid_transitions(memory_db):
     p1 = await sm.transition(project.project_id, WorkflowState.RESEARCHING)
     assert p1.state == WorkflowState.RESEARCHING
 
-    # RESEARCHING -> COMPLETED
-    p2 = await sm.transition(project.project_id, WorkflowState.COMPLETED)
-    assert p2.state == WorkflowState.COMPLETED
+    # RESEARCHING -> AWAITING_RESEARCH_APPROVAL
+    p2 = await sm.transition(
+        project.project_id, WorkflowState.AWAITING_RESEARCH_APPROVAL
+    )
+    assert p2.state == WorkflowState.AWAITING_RESEARCH_APPROVAL
+
+    # AWAITING_RESEARCH_APPROVAL -> RESEARCHING (Feedback loop)
+    p2_feedback = await sm.transition(project.project_id, WorkflowState.RESEARCHING)
+    assert p2_feedback.state == WorkflowState.RESEARCHING
+
+    # RESEARCHING -> AWAITING_RESEARCH_APPROVAL
+    await sm.transition(project.project_id, WorkflowState.AWAITING_RESEARCH_APPROVAL)
+
+    # AWAITING_RESEARCH_APPROVAL -> SCRIPTING (Approval)
+    p3 = await sm.transition(project.project_id, WorkflowState.SCRIPTING)
+    assert p3.state == WorkflowState.SCRIPTING
+
+    # SCRIPTING -> AWAITING_SCRIPT_APPROVAL
+    p4 = await sm.transition(project.project_id, WorkflowState.AWAITING_SCRIPT_APPROVAL)
+    assert p4.state == WorkflowState.AWAITING_SCRIPT_APPROVAL
+
+    # AWAITING_SCRIPT_APPROVAL -> SCRIPTING (Feedback loop)
+    p4_feedback = await sm.transition(project.project_id, WorkflowState.SCRIPTING)
+    assert p4_feedback.state == WorkflowState.SCRIPTING
+
+    # SCRIPTING -> AWAITING_SCRIPT_APPROVAL
+    await sm.transition(project.project_id, WorkflowState.AWAITING_SCRIPT_APPROVAL)
+
+    # AWAITING_SCRIPT_APPROVAL -> COMPLETED (Approval)
+    p5 = await sm.transition(project.project_id, WorkflowState.COMPLETED)
+    assert p5.state == WorkflowState.COMPLETED
 
 
 @pytest.mark.asyncio
@@ -58,6 +95,10 @@ async def test_state_machine_invalid_transition(memory_db):
     # Attempt illegal transition: IDLE -> COMPLETED
     with pytest.raises(InvalidStateTransitionError):
         await sm.transition(project.project_id, WorkflowState.COMPLETED)
+
+    # Attempt illegal transition: IDLE -> SCRIPTING
+    with pytest.raises(InvalidStateTransitionError):
+        await sm.transition(project.project_id, WorkflowState.SCRIPTING)
 
 
 @pytest.mark.asyncio

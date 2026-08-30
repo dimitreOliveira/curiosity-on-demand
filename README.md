@@ -1,45 +1,53 @@
 # Curiosity On Demand
 
-Curiosity On Demand is a video research pipeline orchestrated via Telegram. It takes a user-submitted topic or inquiry, executes grounded web research using Gemini 3.7 Flash with Google Search Grounding to gather rich facts and concepts for video creation, stores the structured research in SQLite, and delivers the research report directly back to the user via Telegram.
+Curiosity On Demand is an automated video research and narration scripting pipeline orchestrated via Telegram. It takes a user-submitted topic, performs grounded web research using Gemini with Google Search Grounding, enables interactive human-in-the-loop review of research findings, synthesizes scene-by-scene narration scripts via `ScriptWriterAgent`, and presents scenes for interactive user feedback and approval.
 
 ---
 
 ## High-Level Architecture
 
 ```text
-+-----------------------+
-|     Telegram User     |
-+-----------+-----------+
-            |
-            v (Submit Topic + Optional Duration)
-+-----------+-----------+
-|  Telegram Bot Service |
-+-----------+-----------+
-            |
-            v (Async Dispatch)
-+-----------+-----------+ <------------------------+
-|    ResearcherAgent    |                         |
-|   (Gemini 3.7 Flash   |                         |
-|   + Google Search)    |                         |
-+-----------+-----------+                         |
-            |                                     |
-            v (Raw Research Notes)                | Feedback & Missing Areas
-+-----------+-----------+                         | (If insufficient & < max rounds)
-|    EvaluatorAgent     |                         |
-| (Filter, Structure &  | ------------------------+
-|   Assess Sufficiency) |
-+-----------+-----------+
-            |
-            v (Structured ResearchReport)
-+-----------+-----------+
-|   SQLite & SQLAlchemy |
-|    (ProjectRecord)    |
-+-----------+-----------+
-            |
-            v (Formatted Markdown)
-+-----------+-----------+
-|     Telegram User     |
-+-----------------------+
++-----------------------------------------------------------------------------------+
+|                                  Telegram User                                    |
++-----------------------------------------------------------------------------------+
+       | (1. Submit Topic)                     ^ (3. Review Summary)  ^ (5. Review Scenes)
+       v                                       |                      |
++--------------------+                         |                      |
+|  Telegram Bot      |                         |                      |
+|  Service           |                         |                      |
++--------------------+                         |                      |
+       |                                       |                      |
+       v (Async Dispatch)                      |                      |
++--------------------+                         |                      |
+|  ResearcherAgent   |<-----+                  |                      |
+|  (Search Grounded) |      |                  |                      |
++--------------------+      | (Internal loop)  |                      |
+       |                    |                  |                      |
+       v                    |                  |                      |
++--------------------+      |                  |                      |
+|   EvaluatorAgent   |------+                  |                      |
+| (Filter/Structure) |                         |                      |
++--------------------+                         |                      |
+       | (Sufficient)                          |                      |
+       v                                       |                      |
+[ State: AWAITING_RESEARCH_APPROVAL ] ---------+                      |
+       |                                                              |
+       +---> User Feedback? ---> Re-run Researcher & Evaluator        |
+       |                                                              |
+       +---> Approved?                                                |
+                |                                                     |
+                v (Async Dispatch)                                    |
+       +--------------------+                                         |
+       | ScriptWriterAgent  |<----------------------------------------+
+       | (Scene Breakdown)  | (Re-run on User Feedback with prev script)
+       +--------------------+
+                |
+                v (Script Generated)
+       [ State: AWAITING_SCRIPT_APPROVAL ]
+                |
+                +---> User Feedback? ---> Re-run ScriptWriter with feedback
+                |
+                +---> Approved? ---> [ State: COMPLETED ]
 ```
 
 ---

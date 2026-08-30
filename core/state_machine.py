@@ -31,6 +31,20 @@ class PipelineStateMachine:
             WorkflowState.FAILED,
         },
         WorkflowState.RESEARCHING: {
+            WorkflowState.AWAITING_RESEARCH_APPROVAL,
+            WorkflowState.FAILED,
+        },
+        WorkflowState.AWAITING_RESEARCH_APPROVAL: {
+            WorkflowState.RESEARCHING,
+            WorkflowState.SCRIPTING,
+            WorkflowState.FAILED,
+        },
+        WorkflowState.SCRIPTING: {
+            WorkflowState.AWAITING_SCRIPT_APPROVAL,
+            WorkflowState.FAILED,
+        },
+        WorkflowState.AWAITING_SCRIPT_APPROVAL: {
+            WorkflowState.SCRIPTING,
             WorkflowState.COMPLETED,
             WorkflowState.FAILED,
         },
