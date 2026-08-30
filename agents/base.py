@@ -1,9 +1,7 @@
 """Base agent abstraction wrapping the Google GenAI SDK with structured output validation."""
 
-import json
 import logging
-import re
-from typing import Any, TypeVar
+from typing import TypeVar, cast
 
 from google import genai
 from google.genai import types
@@ -41,7 +39,7 @@ class BaseAgent:
         tools: list[types.Tool] | None = None,
         model: str | None = None,
     ) -> str:
-        """Generate unstructured text from Gemini."""
+        """Generate text from Gemini (ideal for search-grounded research with tools)."""
         target_model = model or self.model_name
         config = types.GenerateContentConfig(
             system_instruction=system_instruction,
@@ -90,33 +88,30 @@ class BaseAgent:
             config=config,
         )
 
-        # 1. Check if SDK parsed object directly
-        if hasattr(response, "parsed") and response.parsed is not None:
-            if isinstance(response.parsed, response_schema):
-                return response.parsed
-            if isinstance(response.parsed, dict):
-                return response_schema.model_validate(response.parsed)
-
-        # 2. Parse from response.text
-        if not response or not response.text:
+        if not response:
             raise RuntimeError(
-                f"Empty response returned for schema '{response_schema.__name__}'"
+                f"No response returned by Gemini model '{target_model}' for schema '{response_schema.__name__}'"
             )
 
-        raw_text = response.text.strip()
+        if response.parsed:
+            return cast(T, response.parsed)
 
-        # Clean JSON markdown fences if present
-        if raw_text.startswith("```"):
-            raw_text = re.sub(r"^```(?:json)?\n?", "", raw_text)
-            raw_text = re.sub(r"\n?```$", "", raw_text)
-            raw_text = raw_text.strip()
+        # Fallback: attempt manual validation if response.parsed is None
+        if response.text:
+            text = response.text.strip()
+            text = text.removeprefix("```json")
+            text = text.removeprefix("```")
+            text = text.removesuffix("```")
+            text = text.strip()
+            try:
+                return response_schema.model_validate_json(text)
+            except (ValidationError, ValueError) as err:
+                logger.error(
+                    "Failed to parse response text as %s: %s",
+                    response_schema.__name__,
+                    err,
+                )
 
-        try:
-            return response_schema.model_validate_json(raw_text)
-        except (ValidationError, ValueError, TypeError) as err:
-            logger.warning(
-                "Direct JSON validation failed, attempting object parse: %s",
-                err,
-            )
-            data: Any = json.loads(raw_text)
-            return response_schema.model_validate(data)
+        raise RuntimeError(
+            f"Empty or unparsable response returned by Gemini model '{target_model}' for schema '{response_schema.__name__}'"
+        )

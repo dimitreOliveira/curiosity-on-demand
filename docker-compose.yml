@@ -8,5 +8,5 @@ services:
       - .env
     volumes:
       - ./storage:/app/storage
-      - ./client_secrets.json:/app/client_secrets.json:ro
+      - ./notebooks:/app/notebooks
     restart: unless-stopped

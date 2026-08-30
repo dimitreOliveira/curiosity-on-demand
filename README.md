@@ -1,61 +1,45 @@
 # Curiosity On Demand
 
-Curiosity On Demand is an automated, end-to-end video creation pipeline orchestrated via Telegram. It takes a user-submitted topic or inquiry, runs an iterative multi-agent research and verification loop using Gemini 3.7 Flash with Google Search Grounding, seeks human review on the script pitch via Telegram inline buttons, generates scene-by-scene structured scripts with programmatic SVG animation blueprints, renders narration and rasterized SVG keyframes into synchronized MP4 clips, stitches them with FFmpeg, and publishes to YouTube.
+Curiosity On Demand is a video research pipeline orchestrated via Telegram. It takes a user-submitted topic or inquiry, executes grounded web research using Gemini 3.7 Flash with Google Search Grounding to gather rich facts and concepts for video creation, stores the structured research in SQLite, and delivers the research report directly back to the user via Telegram.
 
 ---
 
 ## High-Level Architecture
 
 ```text
-                                  +-----------------------+
-                                  |     Telegram User     |
-                                  +-----------+-----------+
-                                              |
-                                              v (Submit Topic)
-                                  +-----------+-----------+
-                                  |  Telegram Bot Handler |
-                                  +-----------+-----------+
-                                              |
-                                              v
-+---------------------------------------------+----------------------------------------------+
-|                         Multi-Agent Research & Script Loop                                  |
-|                                                                                            |
-|   +-------------------+          +------------------+          +-----------------------+   |
-|   |  ResearcherAgent  | -------> |  VerifierAgent   | -------> |    SummarizerAgent    |   |
-|   | (Gemini 3.7 Flash | <------- | (Fact Inspection | (Pass)   |  (Pitch Concept with  |   |
-|   |  + Search Tool)   | (Retry)  | & Quality Gate)  |          |   Review Narrative)   |   |
-|   +-------------------+          +------------------+          +-----------+-----------+   |
-|                                                                            |               |
-+----------------------------------------------------------------------------|---------------+
-                                                                             |
-                                                                             v
-                                                              +--------------+--------------+
-                                                              |  Human-in-the-Loop Review   |
-                                                              |  [✅ Approve] [✏️ Revise]   |
-                                                              +--------------+--------------+
-                                                                             |
-                                                                             v (Approved)
-                                                              +--------------+--------------+
-                                                              |      ScriptWriterAgent      |
-                                                              | (Scenes + SVG Blueprints)   |
-                                                              +--------------+--------------+
-                                                                             |
-                                                                             v
-+----------------------------------------------------------------------------+---------------+
-|                                Media Engine & Publishing                                   |
-|                                                                                            |
-|   +-------------------+          +------------------+          +-----------------------+   |
-|   |  Voice TTS Engine |          |   SVG Animator   |          |    Video Assembler    |   |
-|   |    (Gemini TTS    |          |    (CairoSVG +   | -------> |     (FFmpeg Multi-    |   |
-|   |  google-genai SDK)|          |  Pillow Frames)  |          |     Track Stitcher)   |   |
-|   +---------+---------+          +--------+---------+          +-----------+-----------+   |
-|             |                             |                                |               |
-|             +-----------------------------+                                v               |
-|                                                                +-----------+-----------+   |
-|                                                                |   YouTube Publisher   |   |
-|                                                                | (YouTube Data API v3) |   |
-|                                                                +-----------------------+   |
-+--------------------------------------------------------------------------------------------+
++-----------------------+
+|     Telegram User     |
++-----------+-----------+
+            |
+            v (Submit Topic + Optional Duration)
++-----------+-----------+
+|  Telegram Bot Service |
++-----------+-----------+
+            |
+            v (Async Dispatch)
++-----------+-----------+ <------------------------+
+|    ResearcherAgent    |                         |
+|   (Gemini 3.7 Flash   |                         |
+|   + Google Search)    |                         |
++-----------+-----------+                         |
+            |                                     |
+            v (Raw Research Notes)                | Feedback & Missing Areas
++-----------+-----------+                         | (If insufficient & < max rounds)
+|    EvaluatorAgent     |                         |
+| (Filter, Structure &  | ------------------------+
+|   Assess Sufficiency) |
++-----------+-----------+
+            |
+            v (Structured ResearchReport)
++-----------+-----------+
+|   SQLite & SQLAlchemy |
+|    (ProjectRecord)    |
++-----------+-----------+
+            |
+            v (Formatted Markdown)
++-----------+-----------+
+|     Telegram User     |
++-----------------------+
 ```
 
 ---
@@ -67,8 +51,6 @@ Curiosity On Demand is an automated, end-to-end video creation pipeline orchestr
 - **Data Validation & Settings:** `pydantic` v2, `pydantic-settings`
 - **Persistence & State:** SQLAlchemy 2.0 async + SQLite (`aiosqlite`)
 - **Bot Framework:** `python-telegram-bot` (v22+ async)
-- **Media Engine:** CairoSVG, Pillow, FFmpeg (`ffmpeg-python`)
-- **Publishing:** YouTube Data API v3 (`google-api-python-client`, `google-auth-oauthlib`)
 - **Development Tooling:** `uv`, `pytest`, `pytest-asyncio`, `ruff`, `ty`, `codespell`
 
 ---
@@ -76,73 +58,65 @@ Curiosity On Demand is an automated, end-to-end video creation pipeline orchestr
 ## Getting Started
 
 ### 1. Prerequisites
+
 - **Python 3.12+**
-- **uv**: `curl -LsSf https://astral.sh/uv/install.sh | sh`
-- **FFmpeg**: `brew install ffmpeg` (macOS) or `sudo apt install ffmpeg` (Linux)
-- **Cairo**: `brew install cairo pango gdk-pixbuf` (macOS) or `sudo apt install libcairo2 libpango-1.0-0` (Linux)
+- **uv**: Fast Python package manager
+  ```bash
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+  ```
 
-### 2. Installation
-Clone the repository and install dependencies with `uv`:
-```bash
-uv sync
-```
+---
 
-### 3. Environment Configuration
-Copy the example environment file and configure your API keys:
+### 2. Environment Configuration
+
+Copy the example environment file and add your credentials:
 ```bash
 cp .env.example .env
 ```
 
-Key environment variables:
-- `GEMINI_API_KEY`: API key from [Google AI Studio](https://aistudio.google.com/)
-- `GEMINI_MODEL`: `gemini-3.7-flash`
-- `RESEARCH_MODEL`: `gemini-3.7-flash`
-- `TELEGRAM_BOT_TOKEN`: Telegram bot token from [@BotFather](https://t.me/BotFather)
-- `YOUTUBE_CLIENT_SECRETS_FILE`: Path to OAuth2 credentials JSON from Google Cloud Console
+Edit `.env` and configure:
+```dotenv
+GEMINI_API_KEY=your_gemini_api_key
+TELEGRAM_BOT_TOKEN=your_telegram_bot_token
+```
 
 ---
 
-## Development Commands
+### 3. Setup & Running Locally
 
+Install dependencies:
 ```bash
-# Run test suite
-make test
+make setup
+```
 
-# Run code formatters and linters (codespell, ruff, ty)
+Run the Telegram bot service:
+```bash
+make run
+```
+
+Run the automated test suite:
+```bash
+make test
+```
+
+Run code formatting and linting:
+```bash
 make lint
 ```
 
 ---
 
-## Directory Structure
+## Testing Notebooks
 
-```text
-curiosity-on-demand/
-├── .env.example
-├── README.md
-├── pyproject.toml
-├── Makefile
-├── config/
-│   ├── __init__.py
-│   └── settings.py              # Pydantic BaseSettings & path configuration
-├── core/
-│   ├── __init__.py
-│   ├── database.py              # Async SQLite/SQLAlchemy ORM models and CRUD
-│   ├── models.py                # Pydantic schemas (Research, Pitch, Scene, Script)
-│   └── state_machine.py         # Pipeline finite state machine
-├── agents/
-│   ├── __init__.py
-│   ├── base.py                  # Base agent wrapping google-genai SDK
-│   ├── researcher.py            # Grounded research with Google Search
-│   ├── verifier.py              # Quality evaluation and gap detection
-│   ├── summarizer.py            # Video concept pitch & user feedback revision
-│   └── scriptwriter.py          # Structured scenes with SVG animation code
-├── media/                       # Media engine (Phase 2)
-├── services/                    # Bot & YouTube integrations (Phase 2)
-├── templates/                   # SVG templates (Phase 2)
-└── tests/
-    ├── conftest.py              # Pytest fixtures and mocks
-    ├── test_models.py           # Schema and serialization unit tests
-    ├── test_database_and_state.py # DB persistence & state machine tests
-    └── test_agents.py           # Agent unit tests with mock GenAI client
+Jupyter notebooks are available in `notebooks/`:
+- **`notebooks/agent_testing.ipynb`**: Interactive testing of `ResearcherAgent` with Gemini and Google Search grounding.
+- **`notebooks/database_explorer.ipynb`**: Inspect stored project sessions and structured research reports.
+
+Launch Jupyter via Docker:
+```bash
+make docker-notebook
+```
+or locally:
+```bash
+uv run jupyter lab
 ```

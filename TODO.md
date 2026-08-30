@@ -1,7 +1,9 @@
 # TODO
 
-- Sample creation, after the script is created, take the first scene and create a video for it (possibly without the audio to make it cheaper and faster), then send the sample to the user (via Telegram)
-- Short creation, automatically identify which scenes (or multiple scenes) could make good shorts and create them (in mobile vertical version)
-- Use transcript model to accept user audio input from Telegram
-
-## BUGFIX
+- Script generation agent: convert research report into scene-by-scene script with visual direction
+- Pitch & review approval loop via Telegram inline buttons
+- Narration synthesis via Gemini TTS
+- SVG animation generator and frame renderer
+- Video assembly and master MP4 generation
+- YouTube publishing integration via YouTube Data API v3
+- User voice input support via audio transcription

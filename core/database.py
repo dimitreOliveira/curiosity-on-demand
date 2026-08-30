@@ -1,6 +1,5 @@
 """Database layer for persistent session state using SQLAlchemy and SQLite."""
 
-import json
 from datetime import UTC, datetime
 
 from sqlalchemy import BigInteger, DateTime, String, Text, select
@@ -14,10 +13,8 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from config.settings import get_settings
 from core.models import (
-    PitchSummary,
     ProjectSession,
     ResearchReport,
-    VideoScript,
     WorkflowState,
 )
 
@@ -27,7 +24,7 @@ class Base(DeclarativeBase):
 
 
 class ProjectRecord(Base):
-    """SQLAlchemy model for persisting video project lifecycle and artifacts."""
+    """SQLAlchemy model for persisting video research project lifecycle and artifacts."""
 
     __tablename__ = "projects"
 
@@ -39,16 +36,8 @@ class ProjectRecord(Base):
         String(32), nullable=False, default=WorkflowState.IDLE.value
     )
 
-    # JSON-encoded payloads for structured agent outputs
+    # JSON-encoded payload for structured research output
     research_json: Mapped[str | None] = mapped_column(Text, nullable=True)
-    pitch_json: Mapped[str | None] = mapped_column(Text, nullable=True)
-    script_json: Mapped[str | None] = mapped_column(Text, nullable=True)
-
-    # Rendered media paths and publishing links
-    final_video_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
-    sample_clip_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
-    short_videos_json: Mapped[str | None] = mapped_column(Text, nullable=True)
-    youtube_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
 
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -68,19 +57,6 @@ class ProjectRecord(Base):
             if self.research_json
             else None
         )
-        pitch_summary = (
-            PitchSummary.model_validate_json(self.pitch_json)
-            if self.pitch_json
-            else None
-        )
-        script = (
-            VideoScript.model_validate_json(self.script_json)
-            if self.script_json
-            else None
-        )
-        short_paths: list[str] = (
-            json.loads(self.short_videos_json) if self.short_videos_json else []
-        )
 
         return ProjectSession(
             project_id=self.project_id,
@@ -89,12 +65,6 @@ class ProjectRecord(Base):
             topic=self.topic,
             state=WorkflowState(self.state),
             research_report=research_report,
-            pitch_summary=pitch_summary,
-            script=script,
-            final_video_path=self.final_video_path,
-            sample_clip_path=self.sample_clip_path,
-            short_video_paths=short_paths,
-            youtube_url=self.youtube_url,
             error_message=self.error_message,
             created_at=self.created_at.isoformat()
             if self.created_at
@@ -198,7 +168,7 @@ class DatabaseManager:
     async def save_research_report(
         self, project_id: str, report: ResearchReport
     ) -> ProjectSession | None:
-        """Persist structured research findings."""
+        """Persist structured research report."""
         async with self.session_factory() as session:
             stmt = select(ProjectRecord).where(ProjectRecord.project_id == project_id)
             result = await session.execute(stmt)
@@ -206,63 +176,6 @@ class DatabaseManager:
             if not record:
                 return None
             record.research_json = report.model_dump_json()
-            record.updated_at = datetime.now(UTC)
-            await session.commit()
-            return record.to_session()
-
-    async def save_pitch_summary(
-        self, project_id: str, pitch: PitchSummary
-    ) -> ProjectSession | None:
-        """Persist pitch summary ready for user review."""
-        async with self.session_factory() as session:
-            stmt = select(ProjectRecord).where(ProjectRecord.project_id == project_id)
-            result = await session.execute(stmt)
-            record = result.scalar_one_or_none()
-            if not record:
-                return None
-            record.pitch_json = pitch.model_dump_json()
-            record.updated_at = datetime.now(UTC)
-            await session.commit()
-            return record.to_session()
-
-    async def save_video_script(
-        self, project_id: str, script: VideoScript
-    ) -> ProjectSession | None:
-        """Persist scene-by-scene script."""
-        async with self.session_factory() as session:
-            stmt = select(ProjectRecord).where(ProjectRecord.project_id == project_id)
-            result = await session.execute(stmt)
-            record = result.scalar_one_or_none()
-            if not record:
-                return None
-            record.script_json = script.model_dump_json()
-            record.updated_at = datetime.now(UTC)
-            await session.commit()
-            return record.to_session()
-
-    async def save_media_outputs(
-        self,
-        project_id: str,
-        final_video_path: str | None = None,
-        sample_clip_path: str | None = None,
-        short_paths: list[str] | None = None,
-        youtube_url: str | None = None,
-    ) -> ProjectSession | None:
-        """Save media artifact paths and published YouTube URL."""
-        async with self.session_factory() as session:
-            stmt = select(ProjectRecord).where(ProjectRecord.project_id == project_id)
-            result = await session.execute(stmt)
-            record = result.scalar_one_or_none()
-            if not record:
-                return None
-            if final_video_path:
-                record.final_video_path = final_video_path
-            if sample_clip_path:
-                record.sample_clip_path = sample_clip_path
-            if short_paths is not None:
-                record.short_videos_json = json.dumps(short_paths)
-            if youtube_url:
-                record.youtube_url = youtube_url
             record.updated_at = datetime.now(UTC)
             await session.commit()
             return record.to_session()

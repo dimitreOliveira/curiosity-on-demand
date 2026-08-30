@@ -1,4 +1,4 @@
-"""State machine managing video pipeline transitions, validations, and events."""
+"""State machine managing video research pipeline transitions, validations, and events."""
 
 import logging
 from collections.abc import Awaitable, Callable
@@ -22,7 +22,7 @@ class InvalidStateTransitionError(Exception):
 
 
 class PipelineStateMachine:
-    """State machine governing the end-to-end video production workflow."""
+    """State machine governing the video research workflow."""
 
     # Allowed transitions graph
     ALLOWED_TRANSITIONS: ClassVar[dict[WorkflowState, set[WorkflowState]]] = {
@@ -31,38 +31,6 @@ class PipelineStateMachine:
             WorkflowState.FAILED,
         },
         WorkflowState.RESEARCHING: {
-            WorkflowState.VERIFYING,
-            WorkflowState.FAILED,
-        },
-        WorkflowState.VERIFYING: {
-            WorkflowState.RESEARCHING,  # Follow-up iteration
-            WorkflowState.AWAITING_APPROVAL,  # Research approved -> pitch ready
-            WorkflowState.FAILED,
-        },
-        WorkflowState.AWAITING_APPROVAL: {
-            WorkflowState.AWAITING_APPROVAL,  # Pitch revision requested
-            WorkflowState.GENERATING_SCRIPT,  # Pitch approved
-            WorkflowState.FAILED,
-        },
-        WorkflowState.GENERATING_SCRIPT: {
-            WorkflowState.GENERATING_SAMPLE,
-            WorkflowState.GENERATING_ASSETS,
-            WorkflowState.FAILED,
-        },
-        WorkflowState.GENERATING_SAMPLE: {
-            WorkflowState.GENERATING_ASSETS,
-            WorkflowState.FAILED,
-        },
-        WorkflowState.GENERATING_ASSETS: {
-            WorkflowState.ASSEMBLING,
-            WorkflowState.FAILED,
-        },
-        WorkflowState.ASSEMBLING: {
-            WorkflowState.UPLOADING,
-            WorkflowState.COMPLETED,
-            WorkflowState.FAILED,
-        },
-        WorkflowState.UPLOADING: {
             WorkflowState.COMPLETED,
             WorkflowState.FAILED,
         },
