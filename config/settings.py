@@ -39,6 +39,11 @@ class Settings(BaseSettings):
         alias="EVALUATOR_MODEL",
         description="Gemini model for research evaluation and structuring",
     )
+    script_model: str = Field(
+        default="gemini-3.7-flash",
+        alias="SCRIPT_MODEL",
+        description="Gemini model for narration script generation",
+    )
     max_research_iterations: int = Field(
         default=3,
         alias="MAX_RESEARCH_ITERATIONS",

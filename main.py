@@ -14,6 +14,17 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     handlers=[logging.StreamHandler(sys.stdout)],
 )
+
+# Silence noisy external library loggers
+for noisy_logger in (
+    "httpx",
+    "httpcore",
+    "telegram",
+    "apscheduler",
+    "google_genai",
+):
+    logging.getLogger(noisy_logger).setLevel(logging.WARNING)
+
 logger = logging.getLogger("curiosity-on-demand")
 
 

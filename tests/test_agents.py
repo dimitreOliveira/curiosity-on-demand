@@ -7,7 +7,8 @@ import pytest
 from agents.base import BaseAgent
 from agents.evaluator import EvaluatorAgent
 from agents.researcher import ResearcherAgent
-from core.models import EvaluationResult, ResearchReport
+from agents.script_writer import ScriptWriterAgent
+from core.models import EvaluationResult, ResearchReport, Script
 
 
 @pytest.mark.asyncio
@@ -137,3 +138,57 @@ async def test_evaluator_agent_final_round_forces_sufficiency(
     )
     assert result.is_sufficient is True
     assert result.feedback_for_researcher is None
+
+
+@pytest.mark.asyncio
+async def test_script_writer_agent_initial(
+    mock_settings, sample_research_report, sample_script
+):
+    """Test ScriptWriterAgent generating structured script from research report."""
+    agent = ScriptWriterAgent(settings=mock_settings)
+
+    mock_resp = MagicMock()
+    mock_resp.parsed = sample_script
+    agent.client.aio.models.generate_content = AsyncMock(return_value=mock_resp)
+
+    script = await agent.generate_script(
+        topic="How Quantum Computers Work",
+        research_report=sample_research_report,
+        target_duration="5 minutes",
+    )
+
+    assert isinstance(script, Script)
+    assert script.topic == "How Quantum Computers Work"
+    assert len(script.scenes) == 3
+    assert script.scenes[0].title == "The Light Switch Dilemma"
+    assert "light switch" in script.scenes[0].narration.lower()
+    agent.client.aio.models.generate_content.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_script_writer_agent_with_feedback(
+    mock_settings, sample_research_report, sample_script
+):
+    """Test ScriptWriterAgent revising script incorporating previous script and user feedback."""
+    agent = ScriptWriterAgent(settings=mock_settings)
+
+    revised_script = sample_script.model_copy(deep=True)
+    revised_script.scenes[0].title = "The Quantum Coin Toss"
+    revised_script.scenes[0].narration = "Imagine flipping a coin that spins forever."
+
+    mock_resp = MagicMock()
+    mock_resp.parsed = revised_script
+    agent.client.aio.models.generate_content = AsyncMock(return_value=mock_resp)
+
+    script = await agent.generate_script(
+        topic="How Quantum Computers Work",
+        research_report=sample_research_report,
+        target_duration="5 minutes",
+        feedback="Change the opening metaphor from a light switch to a spinning coin.",
+        previous_script=sample_script,
+    )
+
+    assert isinstance(script, Script)
+    assert script.scenes[0].title == "The Quantum Coin Toss"
+    assert "coin" in script.scenes[0].narration.lower()
+    agent.client.aio.models.generate_content.assert_called_once()

@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime
 
-from sqlalchemy import BigInteger, DateTime, String, Text, select
+from sqlalchemy import BigInteger, DateTime, String, Text, select, text
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -15,6 +15,7 @@ from config.settings import get_settings
 from core.models import (
     ProjectSession,
     ResearchReport,
+    Script,
     WorkflowState,
 )
 
@@ -39,6 +40,9 @@ class ProjectRecord(Base):
     # JSON-encoded payload for structured research output
     research_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # JSON-encoded payload for structured narration script
+    script_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, default=lambda: datetime.now(UTC), nullable=False
@@ -57,6 +61,9 @@ class ProjectRecord(Base):
             if self.research_json
             else None
         )
+        script = (
+            Script.model_validate_json(self.script_json) if self.script_json else None
+        )
 
         return ProjectSession(
             project_id=self.project_id,
@@ -65,6 +72,7 @@ class ProjectRecord(Base):
             topic=self.topic,
             state=WorkflowState(self.state),
             research_report=research_report,
+            script=script,
             error_message=self.error_message,
             created_at=self.created_at.isoformat()
             if self.created_at
@@ -90,9 +98,17 @@ class DatabaseManager:
         )
 
     async def init_db(self) -> None:
-        """Create database tables if they don't exist."""
+        """Create database tables if they don't exist and apply column migrations."""
         async with self.engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+
+            # Incremental migration for existing SQLite databases
+            result = await conn.execute(text("PRAGMA table_info(projects)"))
+            columns = {row[1] for row in result.fetchall()}
+            if "script_json" not in columns and len(columns) > 0:
+                await conn.execute(
+                    text("ALTER TABLE projects ADD COLUMN script_json TEXT")
+                )
 
     async def create_project(
         self, user_id: int, chat_id: int, topic: str
@@ -176,6 +192,21 @@ class DatabaseManager:
             if not record:
                 return None
             record.research_json = report.model_dump_json()
+            record.updated_at = datetime.now(UTC)
+            await session.commit()
+            return record.to_session()
+
+    async def save_script(
+        self, project_id: str, script: Script
+    ) -> ProjectSession | None:
+        """Persist structured narration script."""
+        async with self.session_factory() as session:
+            stmt = select(ProjectRecord).where(ProjectRecord.project_id == project_id)
+            result = await session.execute(stmt)
+            record = result.scalar_one_or_none()
+            if not record:
+                return None
+            record.script_json = script.model_dump_json()
             record.updated_at = datetime.now(UTC)
             await session.commit()
             return record.to_session()

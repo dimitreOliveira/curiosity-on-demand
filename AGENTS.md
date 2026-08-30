@@ -1,17 +1,17 @@
 # Curiosity On Demand - Agent Instructions
 
 ## Project Purpose (The WHY)
-Curiosity On Demand is a video research pipeline controlled via Telegram. It takes a user-submitted topic, performs grounded web research using Gemini 3.7 Flash with the Google Search tool to gather rich facts, context, and concepts for creating a video, and presents the structured research directly back to the user via Telegram.
+Curiosity On Demand is an automated educational video research and scripting pipeline controlled via Telegram. It takes a user-submitted topic, performs grounded web research using Gemini with Google Search Grounding to gather rich facts, context, and concepts, enables interactive human review and feedback, and generates scene-by-scene narration scripts.
 
 ## Tech Stack & Structure (The WHAT)
 - **Language & Runtime:** Python 3.12+, AsyncIO.
-- **AI & Grounding:** Google GenAI SDK (Gemini 3.7 Flash with Google Search Grounding).
+- **AI & Grounding:** Google GenAI SDK (Gemini with Google Search Grounding & Structured Outputs).
 - **Bot & Flow:** `python-telegram-bot` (v22+ async), custom state machine with SQLite/SQLAlchemy.
 - **Tooling:** `uv` for fast dependency management, Docker, `ruff`, `ty`, `codespell`.
 
 **Key Components:**
 - `main.py`: Application entrypoint running the bot.
-- `agents/`: Autonomous agent (`base.py`, `researcher.py`).
+- `agents/`: Autonomous agents (`base.py`, `researcher.py`, `evaluator.py`, `script_writer.py`).
 - `core/`: FSM transitions (`state_machine.py`), Pydantic schemas (`models.py`), and DB models (`database.py`).
 - `services/`: Telegram bot integration (`telegram_bot.py`).
 - `notebooks/`: Testing and diagnostic notebooks (`agent_testing.ipynb`, `database_explorer.ipynb`).
