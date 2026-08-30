@@ -1,0 +1,25 @@
+# Virtual environments
+.venv/
+env/
+venv/
+ENV/
+
+# Python bytecode & cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Git & IDEs
+.git/
+.gitignore
+.idea/
+.vscode/
+.DS_Store
+
+# Local storage and database artifacts
+storage/*.db
+storage/*.sqlite*

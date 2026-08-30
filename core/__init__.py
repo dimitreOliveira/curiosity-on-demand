@@ -2,38 +2,24 @@
 
 from core.database import Base, DatabaseManager, ProjectRecord, get_db_manager
 from core.models import (
-    AnimationType,
-    AspectRatio,
-    PitchSummary,
+    EvaluationResult,
     ProjectSession,
-    ResearchFinding,
     ResearchReport,
-    ResearchSource,
-    Scene,
-    SceneVisualBlueprint,
-    VerificationResult,
-    VideoScript,
+    ResearchSection,
     WorkflowState,
 )
 from core.state_machine import InvalidStateTransitionError, PipelineStateMachine
 
 __all__ = [
-    "AnimationType",
-    "AspectRatio",
     "Base",
     "DatabaseManager",
+    "EvaluationResult",
     "InvalidStateTransitionError",
     "PipelineStateMachine",
-    "PitchSummary",
     "ProjectRecord",
     "ProjectSession",
-    "ResearchFinding",
     "ResearchReport",
-    "ResearchSource",
-    "Scene",
-    "SceneVisualBlueprint",
-    "VerificationResult",
-    "VideoScript",
+    "ResearchSection",
     "WorkflowState",
     "get_db_manager",
 ]

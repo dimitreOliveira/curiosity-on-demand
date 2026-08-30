@@ -1,22 +1,20 @@
 # Curiosity On Demand - Agent Instructions
 
 ## Project Purpose (The WHY)
-Curiosity On Demand is an automated, end-to-end video creation pipeline controlled via Telegram. It takes a user-submitted topic, runs an iterative multi-agent research and verification loop using Gemini and Google Search, seeks human approval on the script via Telegram, and automatically renders narration, SVG-based animations, and stitched MP4 videos before publishing them to YouTube.
+Curiosity On Demand is a video research pipeline controlled via Telegram. It takes a user-submitted topic, performs grounded web research using Gemini 3.7 Flash with the Google Search tool to gather rich facts, context, and concepts for creating a video, and presents the structured research directly back to the user via Telegram.
 
 ## Tech Stack & Structure (The WHAT)
 - **Language & Runtime:** Python 3.12+, AsyncIO.
-- **AI & TTS:** Google GenAI SDK (Gemini with Google Search Grounding & Gemini TTS audio synthesis).
-- **Bot & Flow:** `python-telegram-bot` (v20+ async), custom state machine with SQLite/SQLAlchemy.
-- **Media Engine:** CairoSVG, Pillow, FFmpeg (`ffmpeg-python` or `moviepy`).
-- **Publishing:** YouTube Data API v3 (`google-api-python-client`).
-- **Tooling:** `uv` for fast dependency management, Docker, `ruff`, `ty`.
+- **AI & Grounding:** Google GenAI SDK (Gemini 3.7 Flash with Google Search Grounding).
+- **Bot & Flow:** `python-telegram-bot` (v22+ async), custom state machine with SQLite/SQLAlchemy.
+- **Tooling:** `uv` for fast dependency management, Docker, `ruff`, `ty`, `codespell`.
 
 **Key Components:**
-- `main.py`: Application entrypoint running the bot and background task workers.
-- `agents/`: Autonomous agent nodes (`researcher.py`, `verifier.py`, `summarizer.py`, `scriptwriter.py`).
-- `core/`: FSM transitions (`state_machine.py`), Pydantic schemas, and DB models (`models.py`).
-- `media/`: Asset generators (`audio_tts.py`, `svg_animator.py`, `video_assembler.py`).
-- `services/`: External integrations (`telegram_bot.py`, `youtube_publisher.py`).
+- `main.py`: Application entrypoint running the bot.
+- `agents/`: Autonomous agent (`base.py`, `researcher.py`).
+- `core/`: FSM transitions (`state_machine.py`), Pydantic schemas (`models.py`), and DB models (`database.py`).
+- `services/`: Telegram bot integration (`telegram_bot.py`).
+- `notebooks/`: Testing and diagnostic notebooks (`agent_testing.ipynb`, `database_explorer.ipynb`).
 
 ## Development Workflow (The HOW)
 This project uses `uv` for environment management and `make` for automation.
@@ -27,13 +25,12 @@ Always activate the virtual environment before testing or running:
 
 **Core Commands:**
 - `make setup`: Install dependencies using `uv sync`.
-- `make run`: Start the Telegram bot and media worker.
+- `make run`: Start the Telegram bot service.
 - `make test`: Run `pytest` unit and integration tests. Run this after finishing any code edits.
 - `make lint`: Format and lint the codebase (`ruff format`, `ruff check`, `ty`). Run this after finishing any code edits.
 
 ## Agent Guidelines & Guardrails
-- **Non-Blocking Operations:** Media generation (rendering SVG frames, assembling FFmpeg video) and LLM queries are CPU/network heavy. Always dispatch these to background worker threads/tasks to prevent blocking the Telegram bot's async event loop.
-- **Strict Structured Outputs:** All agent inter-communication (especially script generation) must strictly validate through Pydantic models in `core/models.py`.
-- **Stateless Agent Nodes:** Keep agent modules pure and idempotent. State transitions (e.g., waiting for user approval) must be managed exclusively by `core/state_machine.py`.
-- **SVG Animation Contract:** SVG templates must be cleanly parameterizable and compatible with headless rasterization via `cairosvg`.
+- **Non-Blocking Operations:** LLM queries and web research are network heavy. Always dispatch these to background tasks to prevent blocking the Telegram bot's async event loop.
+- **Strict Structured Outputs:** All agent research must strictly validate through Pydantic models in `core/models.py`.
+- **Stateless Agent Nodes:** Keep agent modules pure and idempotent. State transitions must be managed exclusively by `core/state_machine.py`.
 - **Keep it Updated:** When modifying database schemas, pipeline stages, or dependencies, update `README.md` and `.env.example` immediately.

@@ -27,22 +27,27 @@ class Settings(BaseSettings):
     gemini_model: str = Field(
         default="gemini-3.7-flash",
         alias="GEMINI_MODEL",
-        description="Default Gemini model for summarization and scriptwriting",
+        description="Default Gemini model",
     )
     research_model: str = Field(
         default="gemini-3.7-flash",
         alias="RESEARCH_MODEL",
-        description="Gemini model for research and verification with search grounding",
+        description="Gemini model for research with search grounding",
     )
-    tts_model: str = Field(
-        default="gemini-2.0-flash",
-        alias="TTS_MODEL",
-        description="Gemini model for text-to-speech narration synthesis",
+    evaluator_model: str = Field(
+        default="gemini-3.7-flash",
+        alias="EVALUATOR_MODEL",
+        description="Gemini model for research evaluation and structuring",
     )
-    tts_voice: str = Field(
-        default="random",
-        alias="TTS_VOICE",
-        description="Gemini voice name for speech synthesis (e.g. random, Puck, Charon, Kore, Fenrir, Zephyr)",
+    max_research_iterations: int = Field(
+        default=3,
+        alias="MAX_RESEARCH_ITERATIONS",
+        description="Maximum iterative research-evaluator refinement rounds",
+    )
+    default_video_duration_minutes: int = Field(
+        default=10,
+        alias="DEFAULT_VIDEO_DURATION_MINUTES",
+        description="Default target video duration in minutes when unspecified",
     )
 
     # Telegram Bot Configuration
@@ -90,28 +95,11 @@ class Settings(BaseSettings):
             return res
         return []
 
-    # YouTube Configuration (OAuth2 Client)
-    youtube_client_secrets_file: Path = Field(
-        default=Path("client_secrets.json"),
-        alias="YOUTUBE_CLIENT_SECRETS_FILE",
-        description="Path to OAuth2 client_secrets.json for YouTube Data API",
-    )
-    youtube_token_file: Path = Field(
-        default=Path("storage/youtube_token.json"),
-        alias="YOUTUBE_TOKEN_FILE",
-        description="Path to store refreshed YouTube OAuth2 user token",
-    )
-
     # Storage and Output Paths
     storage_dir: Path = Field(
         default=Path("storage"),
         alias="STORAGE_DIR",
-        description="Base storage directory for project files and caches",
-    )
-    media_output_dir: Path = Field(
-        default=Path("storage/media"),
-        alias="MEDIA_OUTPUT_DIR",
-        description="Directory where generated audio, SVG frames, and MP4 videos are saved",
+        description="Base storage directory for project files and database",
     )
     sqlite_db_path: Path = Field(
         default=Path("storage/curiosity.db"),
@@ -119,42 +107,9 @@ class Settings(BaseSettings):
         description="SQLite database file path for session and state tracking",
     )
 
-    # Pipeline Constraints & Video Parameters
-    max_research_iterations: int = Field(
-        default=3,
-        alias="MAX_RESEARCH_ITERATIONS",
-        description="Maximum iterations between researcher and verifier agents",
-    )
-    default_video_width: int = Field(
-        default=1920,
-        alias="DEFAULT_VIDEO_WIDTH",
-        description="Default landscape video width (1080p)",
-    )
-    default_video_height: int = Field(
-        default=1080,
-        alias="DEFAULT_VIDEO_HEIGHT",
-        description="Default landscape video height (1080p)",
-    )
-    short_video_width: int = Field(
-        default=1080,
-        alias="SHORT_VIDEO_WIDTH",
-        description="Vertical short video width (9:16)",
-    )
-    short_video_height: int = Field(
-        default=1920,
-        alias="SHORT_VIDEO_HEIGHT",
-        description="Vertical short video height (9:16)",
-    )
-    default_fps: int = Field(
-        default=30,
-        alias="DEFAULT_FPS",
-        description="Target frames per second for video rendering",
-    )
-
     def ensure_directories(self) -> None:
         """Create necessary directories if they do not exist."""
         self.storage_dir.mkdir(parents=True, exist_ok=True)
-        self.media_output_dir.mkdir(parents=True, exist_ok=True)
         if self.sqlite_db_path.parent:
             self.sqlite_db_path.parent.mkdir(parents=True, exist_ok=True)
 

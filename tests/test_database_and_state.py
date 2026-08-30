@@ -7,9 +7,7 @@ from core.state_machine import InvalidStateTransitionError, PipelineStateMachine
 
 
 @pytest.mark.asyncio
-async def test_database_crud_lifecycle(
-    memory_db, sample_research_report, sample_pitch_summary, sample_video_script
-):
+async def test_database_crud_lifecycle(memory_db, sample_research_report):
     """Test full database lifecycle for creating and updating project state."""
     # 1. Create project
     project = await memory_db.create_project(
@@ -31,34 +29,7 @@ async def test_database_crud_lifecycle(
     assert updated is not None
     assert updated.research_report is not None
     assert updated.research_report.topic == sample_research_report.topic
-
-    # 4. Save pitch summary
-    updated = await memory_db.save_pitch_summary(
-        project.project_id, sample_pitch_summary
-    )
-    assert updated is not None
-    assert updated.pitch_summary is not None
-    assert updated.pitch_summary.title_options == sample_pitch_summary.title_options
-
-    # 5. Save script
-    updated = await memory_db.save_video_script(project.project_id, sample_video_script)
-    assert updated is not None
-    assert updated.script is not None
-    assert len(updated.script.scenes) == 2
-
-    # 6. Save media outputs
-    updated = await memory_db.save_media_outputs(
-        project_id=project.project_id,
-        final_video_path="/path/to/final.mp4",
-        sample_clip_path="/path/to/sample.mp4",
-        short_paths=["/path/to/short_1.mp4"],
-        youtube_url="https://youtu.be/test1234",
-    )
-    assert updated is not None
-    assert updated.final_video_path == "/path/to/final.mp4"
-    assert updated.sample_clip_path == "/path/to/sample.mp4"
-    assert updated.short_video_paths == ["/path/to/short_1.mp4"]
-    assert updated.youtube_url == "https://youtu.be/test1234"
+    assert len(updated.research_report.sections) == 3
 
 
 @pytest.mark.asyncio
@@ -73,49 +44,9 @@ async def test_state_machine_valid_transitions(memory_db):
     p1 = await sm.transition(project.project_id, WorkflowState.RESEARCHING)
     assert p1.state == WorkflowState.RESEARCHING
 
-    # RESEARCHING -> VERIFYING
-    p2 = await sm.transition(project.project_id, WorkflowState.VERIFYING)
-    assert p2.state == WorkflowState.VERIFYING
-
-    # VERIFYING -> RESEARCHING (loop back)
-    p3 = await sm.transition(project.project_id, WorkflowState.RESEARCHING)
-    assert p3.state == WorkflowState.RESEARCHING
-
-    # RESEARCHING -> VERIFYING
-    p4 = await sm.transition(project.project_id, WorkflowState.VERIFYING)
-    assert p4.state == WorkflowState.VERIFYING
-
-    # VERIFYING -> AWAITING_APPROVAL
-    p5 = await sm.transition(project.project_id, WorkflowState.AWAITING_APPROVAL)
-    assert p5.state == WorkflowState.AWAITING_APPROVAL
-
-    # AWAITING_APPROVAL -> AWAITING_APPROVAL (revision loop)
-    p6 = await sm.transition(project.project_id, WorkflowState.AWAITING_APPROVAL)
-    assert p6.state == WorkflowState.AWAITING_APPROVAL
-
-    # AWAITING_APPROVAL -> GENERATING_SCRIPT
-    p7 = await sm.transition(project.project_id, WorkflowState.GENERATING_SCRIPT)
-    assert p7.state == WorkflowState.GENERATING_SCRIPT
-
-    # GENERATING_SCRIPT -> GENERATING_SAMPLE
-    p8 = await sm.transition(project.project_id, WorkflowState.GENERATING_SAMPLE)
-    assert p8.state == WorkflowState.GENERATING_SAMPLE
-
-    # GENERATING_SAMPLE -> GENERATING_ASSETS
-    p9 = await sm.transition(project.project_id, WorkflowState.GENERATING_ASSETS)
-    assert p9.state == WorkflowState.GENERATING_ASSETS
-
-    # GENERATING_ASSETS -> ASSEMBLING
-    p10 = await sm.transition(project.project_id, WorkflowState.ASSEMBLING)
-    assert p10.state == WorkflowState.ASSEMBLING
-
-    # ASSEMBLING -> UPLOADING
-    p11 = await sm.transition(project.project_id, WorkflowState.UPLOADING)
-    assert p11.state == WorkflowState.UPLOADING
-
-    # UPLOADING -> COMPLETED
-    p12 = await sm.transition(project.project_id, WorkflowState.COMPLETED)
-    assert p12.state == WorkflowState.COMPLETED
+    # RESEARCHING -> COMPLETED
+    p2 = await sm.transition(project.project_id, WorkflowState.COMPLETED)
+    assert p2.state == WorkflowState.COMPLETED
 
 
 @pytest.mark.asyncio
