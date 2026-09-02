@@ -247,8 +247,9 @@ async def test_telegram_bot_run_script_pipeline(
 async def test_telegram_bot_approve_script_callback(
     mock_settings, memory_db, sample_research_report, sample_script
 ):
-    """Test clicking Approve Script callback transitions project to COMPLETED."""
+    """Test clicking Approve Script callback triggers style pipeline."""
     bot_service = TelegramBotService(settings=mock_settings, db=memory_db)
+    bot_service._run_style_pipeline = AsyncMock()
 
     session = await memory_db.create_project(
         user_id=123, chat_id=456, topic="Quantum Computing"
@@ -280,10 +281,246 @@ async def test_telegram_bot_approve_script_callback(
 
     query.answer.assert_called_once()
     query.message.reply_text.assert_called_once()
+    assert "script approved" in query.message.reply_text.call_args[0][0].lower()
+
+
+@pytest.mark.asyncio
+async def test_telegram_bot_run_style_pipeline(
+    mock_settings,
+    memory_db,
+    sample_research_report,
+    sample_script,
+    sample_animation_style,
+    sample_scene_animation,
+):
+    """Test style pipeline generating style, rendering sample frame snapshot, and transitioning to AWAITING_STYLE_APPROVAL."""
+    bot_service = TelegramBotService(settings=mock_settings, db=memory_db)
+    bot_service.planner.plan_style = AsyncMock(return_value=sample_animation_style)
+    bot_service.animator.animate_scene = AsyncMock(return_value=sample_scene_animation)
+
+    async def mock_render_frame(html_content, output_image_path, **kwargs):
+        output_image_path.parent.mkdir(parents=True, exist_ok=True)
+        output_image_path.write_bytes(b"\x89PNG\r\n\x1a\nFakePng")
+        return output_image_path
+
+    bot_service.renderer.render_sample_frame = AsyncMock(side_effect=mock_render_frame)
+
+    mock_app = MagicMock()
+    mock_app.bot.send_photo = AsyncMock()
+    mock_app.bot.send_message = AsyncMock()
+    bot_service.app = mock_app
+
+    session = await memory_db.create_project(
+        user_id=123, chat_id=456, topic="Quantum Computing"
+    )
+    await memory_db.save_research_report(session.project_id, sample_research_report)
+    await memory_db.save_script(session.project_id, sample_script)
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.RESEARCHING
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.AWAITING_RESEARCH_APPROVAL
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.SCRIPTING
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.AWAITING_SCRIPT_APPROVAL
+    )
+
+    await bot_service._run_style_pipeline(session.project_id)
+
+    updated = await memory_db.get_project(session.project_id)
+    assert updated is not None
+    assert updated.state == WorkflowState.AWAITING_STYLE_APPROVAL
+    assert updated.style is not None
+    assert updated.style.style_name == sample_animation_style.style_name
+    assert updated.sample_frame_path is not None
+
+    assert bot_service.planner.plan_style.call_count == 1
+    assert bot_service.animator.animate_scene.call_count == 1
+    assert bot_service.renderer.render_sample_frame.call_count == 1
+    assert mock_app.bot.send_photo.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_telegram_bot_style_feedback_routing(
+    mock_settings,
+    memory_db,
+    sample_research_report,
+    sample_script,
+    sample_animation_style,
+):
+    """Test text message while in AWAITING_STYLE_APPROVAL is routed as style feedback."""
+    bot_service = TelegramBotService(settings=mock_settings, db=memory_db)
+    bot_service._run_style_pipeline = AsyncMock()
+
+    session = await memory_db.create_project(
+        user_id=123, chat_id=456, topic="Quantum Computing"
+    )
+    await memory_db.save_research_report(session.project_id, sample_research_report)
+    await memory_db.save_script(session.project_id, sample_script)
+    await memory_db.save_style(session.project_id, sample_animation_style)
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.RESEARCHING
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.AWAITING_RESEARCH_APPROVAL
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.SCRIPTING
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.AWAITING_SCRIPT_APPROVAL
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.STYLING
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.AWAITING_STYLE_APPROVAL
+    )
+
+    update = MagicMock()
+    update.effective_user.id = 123
+    update.effective_user.username = "testuser"
+    update.effective_chat.id = 456
+    update.message.text = "Make it darker with neon purple highlights"
+    update.message.reply_text = AsyncMock()
+
+    await bot_service._handle_message(update, MagicMock())
+
+    update.message.reply_text.assert_called_once()
+    assert (
+        "style feedback received" in update.message.reply_text.call_args[0][0].lower()
+    )
+
+
+@pytest.mark.asyncio
+async def test_telegram_bot_approve_style_callback(
+    mock_settings,
+    memory_db,
+    sample_research_report,
+    sample_script,
+    sample_animation_style,
+):
+    """Test clicking Approve Style callback triggers full animation pipeline."""
+    bot_service = TelegramBotService(settings=mock_settings, db=memory_db)
+    bot_service._run_full_animation_pipeline = AsyncMock()
+
+    session = await memory_db.create_project(
+        user_id=123, chat_id=456, topic="Quantum Computing"
+    )
+    await memory_db.save_research_report(session.project_id, sample_research_report)
+    await memory_db.save_script(session.project_id, sample_script)
+    await memory_db.save_style(session.project_id, sample_animation_style)
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.RESEARCHING
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.AWAITING_RESEARCH_APPROVAL
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.SCRIPTING
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.AWAITING_SCRIPT_APPROVAL
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.STYLING
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.AWAITING_STYLE_APPROVAL
+    )
+
+    # Click approve_style button
+    update = MagicMock()
+    query = MagicMock()
+    query.data = f"approve_style:{session.project_id}"
+    query.answer = AsyncMock()
+    query.message = MagicMock(spec=Message)
+    query.message.reply_text = AsyncMock()
+    update.callback_query = query
+
+    await bot_service._handle_callback_query(update, MagicMock())
+
+    query.answer.assert_called_once()
+    query.message.reply_text.assert_called_once()
+    assert (
+        "animation style approved" in query.message.reply_text.call_args[0][0].lower()
+    )
+
+
+@pytest.mark.asyncio
+async def test_telegram_bot_run_full_animation_pipeline(
+    mock_settings,
+    memory_db,
+    sample_research_report,
+    sample_script,
+    sample_animation_style,
+    sample_storyboard,
+):
+    """Test full animation pipeline rendering all scenes, assembling video, and delivering to Telegram."""
+    bot_service = TelegramBotService(settings=mock_settings, db=memory_db)
+    bot_service.animator.animate_storyboard = AsyncMock(return_value=sample_storyboard)
+
+    async def mock_render_video(html_content, output_video_path, **kwargs):
+        output_video_path.parent.mkdir(parents=True, exist_ok=True)
+        output_video_path.write_bytes(b"FakeSceneVideoBytes")
+        return output_video_path
+
+    async def mock_assemble(scene_video_paths, output_video_path):
+        output_video_path.parent.mkdir(parents=True, exist_ok=True)
+        output_video_path.write_bytes(b"FakeMasterVideoBytes")
+        return output_video_path
+
+    bot_service.renderer.render_scene_video = AsyncMock(side_effect=mock_render_video)
+    bot_service.renderer.assemble_video = AsyncMock(side_effect=mock_assemble)
+
+    mock_app = MagicMock()
+    mock_app.bot.send_message = AsyncMock()
+    mock_app.bot.send_video = AsyncMock()
+    bot_service.app = mock_app
+
+    session = await memory_db.create_project(
+        user_id=123, chat_id=456, topic="Quantum Computing"
+    )
+    await memory_db.save_research_report(session.project_id, sample_research_report)
+    await memory_db.save_script(session.project_id, sample_script)
+    await memory_db.save_style(session.project_id, sample_animation_style)
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.RESEARCHING
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.AWAITING_RESEARCH_APPROVAL
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.SCRIPTING
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.AWAITING_SCRIPT_APPROVAL
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.STYLING
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.AWAITING_STYLE_APPROVAL
+    )
+
+    # Execute full animation pipeline
+    await bot_service._run_full_animation_pipeline(session.project_id)
 
     updated = await memory_db.get_project(session.project_id)
     assert updated is not None
     assert updated.state == WorkflowState.COMPLETED
+    assert updated.storyboard is not None
+    assert updated.final_video_path is not None
+
+    assert bot_service.animator.animate_storyboard.call_count == 1
+    assert bot_service.renderer.render_scene_video.call_count == len(
+        sample_storyboard.scenes
+    )
+    assert bot_service.renderer.assemble_video.call_count == 1
+    assert mock_app.bot.send_video.call_count == 1
 
 
 @pytest.mark.asyncio
@@ -381,5 +618,47 @@ async def test_telegram_bot_send_script_results_summarized(
     for scene in sample_script.scenes:
         assert f"Scene {scene.scene_number}: {scene.title}" in sent_text
         assert scene.summary in sent_text
-        # Full narration should NOT be sent
+        # Full narration and visual idea descriptions should NOT be sent
         assert scene.narration not in sent_text
+        assert "Visual Idea:" not in sent_text
+        if scene.description:
+            assert scene.description not in sent_text
+
+
+@pytest.mark.asyncio
+async def test_telegram_bot_send_style_results_summarized(
+    mock_settings, memory_db, sample_animation_style, tmp_path
+):
+    """Test that _send_style_results sends visual style design and art direction without technical details."""
+    bot_service = TelegramBotService(settings=mock_settings, db=memory_db)
+    mock_app = MagicMock()
+    mock_app.bot.send_photo = AsyncMock()
+    mock_app.bot.send_message = AsyncMock()
+    bot_service.app = mock_app
+
+    sample_frame_path = tmp_path / "scene_1_sample.png"
+    sample_frame_path.write_bytes(b"\x89PNG\r\n\x1a\nFakePng")
+
+    await bot_service._send_style_results(
+        chat_id=456,
+        style=sample_animation_style,
+        sample_frame_path=sample_frame_path,
+        project_id="proj-123",
+    )
+
+    # Should send photo with caption
+    assert mock_app.bot.send_photo.call_count == 1
+    call_args = mock_app.bot.send_photo.call_args[1]
+    caption = call_args["caption"]
+
+    # Verify Visual Style Design and Art Direction are present
+    assert f"Visual Style Design: {sample_animation_style.style_name}" in caption
+    assert "Art Direction:" in caption
+    assert sample_animation_style.visual_description in caption
+    assert call_args["reply_markup"] is not None
+
+    # Verify technical details are NOT included
+    assert "Palette:" not in caption
+    assert "Typography:" not in caption
+    assert "Animation Guidelines:" not in caption
+    assert sample_animation_style.animation_guidelines not in caption

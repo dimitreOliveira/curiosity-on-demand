@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import re
+from pathlib import Path
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message, Update
 from telegram.constants import ParseMode
@@ -15,13 +16,22 @@ from telegram.ext import (
     filters,
 )
 
+from agents.animation_planner import AnimationPlannerAgent
 from agents.evaluator import EvaluatorAgent
 from agents.researcher import ResearcherAgent
+from agents.scene_animator import SceneAnimatorAgent
 from agents.script_writer import ScriptWriterAgent
 from config.settings import Settings, get_settings
 from core.database import DatabaseManager, get_db_manager
-from core.models import ResearchReport, Script, WorkflowState
+from core.models import (
+    AnimationStyle,
+    ResearchReport,
+    SceneAnimation,
+    Script,
+    WorkflowState,
+)
 from core.state_machine import PipelineStateMachine
+from services.renderer import AnimationRenderer
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +45,7 @@ def extract_target_duration(text: str, default_minutes: int = 10) -> str:
 
 
 class TelegramBotService:
-    """Async Telegram Bot orchestrating research, scripting, and interactive user reviews."""
+    """Async Telegram Bot orchestrating research, scripting, animation, and video production."""
 
     def __init__(
         self,
@@ -48,6 +58,9 @@ class TelegramBotService:
         self.researcher = ResearcherAgent(settings=self.settings)
         self.evaluator = EvaluatorAgent(settings=self.settings)
         self.script_writer = ScriptWriterAgent(settings=self.settings)
+        self.planner = AnimationPlannerAgent(settings=self.settings)
+        self.animator = SceneAnimatorAgent(settings=self.settings)
+        self.renderer = AnimationRenderer(settings=self.settings)
         self.app: Application | None = None
 
     def _is_user_authorized(
@@ -238,9 +251,25 @@ class TelegramBotService:
                 )
                 return
 
+            if active_project.state == WorkflowState.AWAITING_STYLE_APPROVAL:
+                # User provided feedback on the animation visual style
+                await update.message.reply_text(
+                    f"📝 *Style feedback received:*\n_{text}_\n\n"
+                    f"🎨 Refining animation style and re-generating Scene 1 sample...",
+                    parse_mode=ParseMode.MARKDOWN,
+                )
+                asyncio.create_task(
+                    self._run_style_pipeline(
+                        active_project.project_id, user_feedback=text
+                    )
+                )
+                return
+
             if active_project.state in (
                 WorkflowState.RESEARCHING,
                 WorkflowState.SCRIPTING,
+                WorkflowState.STYLING,
+                WorkflowState.ANIMATING,
             ):
                 await update.message.reply_text(
                     "⏳ A task is currently running for your project. Please wait for it to finish or use `/cancel` to abort.",
@@ -268,7 +297,7 @@ class TelegramBotService:
     async def _handle_callback_query(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
-        """Handle inline button clicks for approving research and scripts."""
+        """Handle inline button clicks for approving research, scripts, and visual styles."""
         query = update.callback_query
         if not query or not query.data:
             return
@@ -304,13 +333,31 @@ class TelegramBotService:
                     )
                 return
 
-            await self.state_machine.transition(project_id, WorkflowState.COMPLETED)
             if isinstance(query.message, Message):
                 await query.message.reply_text(
-                    "🎉 *Script Approved & Finalized!*\n\n"
-                    "The narration script is ready. All scenes and voiceovers have been saved.",
+                    "✅ *Script approved!*\n\n🎨 Designing animation style and generating Scene 1 sample frame...",
                     parse_mode=ParseMode.MARKDOWN,
                 )
+
+            asyncio.create_task(self._run_style_pipeline(project_id))
+
+        elif data.startswith("approve_style:"):
+            project_id = data.split(":", 1)[1]
+            project = await self.db.get_project(project_id)
+            if not project or project.state != WorkflowState.AWAITING_STYLE_APPROVAL:
+                if isinstance(query.message, Message):
+                    await query.message.reply_text(
+                        "ℹ️ This style review is no longer active."
+                    )
+                return
+
+            if isinstance(query.message, Message):
+                await query.message.reply_text(
+                    "✅ *Animation style approved!*\n\n🎬 Generating full scene animations and assembling video...",
+                    parse_mode=ParseMode.MARKDOWN,
+                )
+
+            asyncio.create_task(self._run_full_animation_pipeline(project_id))
 
     # ==========================================================================
     # Pipeline Orchestration
@@ -558,7 +605,8 @@ class TelegramBotService:
 
         if script.scenes:
             scene_summaries = [
-                f"🎬 *Scene {scene.scene_number}: {scene.title}*\n{scene.summary}"
+                f"🎬 *Scene {scene.scene_number}: {scene.title}*\n"
+                f"📌 *Summary:* {scene.summary}"
                 for scene in script.scenes
             ]
             parts.append("📋 *Scene Breakdown:*\n\n" + "\n\n".join(scene_summaries))
@@ -575,3 +623,254 @@ class TelegramBotService:
             text=full_text,
             reply_markup=InlineKeyboardMarkup(keyboard),
         )
+
+    async def _run_style_pipeline(
+        self, project_id: str, user_feedback: str | None = None
+    ) -> None:
+        """Execute AnimationPlanner and SceneAnimator agents to formulate visual style, generate Scene 1 HTML sample, and render frame snapshot."""
+        try:
+            session = await self.db.get_project(project_id)
+            if not session or not session.script:
+                logger.error(
+                    "Cannot run style pipeline: project or script missing for %s",
+                    project_id,
+                )
+                return
+
+            await self.state_machine.transition(project_id, WorkflowState.STYLING)
+
+            style = await self.planner.plan_style(
+                topic=session.topic,
+                script=session.script,
+                feedback=user_feedback,
+                previous_style=session.style,
+            )
+
+            scene_1 = session.script.scenes[0] if session.script.scenes else None
+            if not scene_1:
+                raise RuntimeError("Cannot animate: script contains no scenes.")
+
+            scene_1_anim = await self.animator.animate_scene(
+                topic=session.topic,
+                scene=scene_1,
+                style=style,
+                duration_seconds=scene_1.duration_seconds,
+            )
+
+            # Persist Scene 1 HTML code
+            anim_dir = self.settings.animations_dir / project_id
+            anim_dir.mkdir(parents=True, exist_ok=True)
+            scene_1_html_path = anim_dir / "scene_1.html"
+            scene_1_html_path.write_text(scene_1_anim.html_content, encoding="utf-8")
+
+            # Render Scene 1 sample frame image snapshot (PNG)
+            render_dir = self.settings.renders_dir / project_id
+            render_dir.mkdir(parents=True, exist_ok=True)
+            sample_frame_path = render_dir / "scene_1_sample.png"
+
+            await self.renderer.render_sample_frame(
+                html_content=scene_1_anim.html_content,
+                output_image_path=sample_frame_path,
+            )
+
+            await self.db.save_style(
+                project_id=project_id,
+                style=style,
+                sample_frame_path=str(sample_frame_path),
+            )
+            await self.state_machine.transition(
+                project_id, WorkflowState.AWAITING_STYLE_APPROVAL
+            )
+
+            # Send visual style sample image and review buttons to user
+            await self._send_style_results(
+                chat_id=session.chat_id,
+                style=style,
+                sample_frame_path=sample_frame_path,
+                project_id=project_id,
+            )
+
+        except Exception as err:
+            logger.exception(
+                "Error during animation style generation for project %s", project_id
+            )
+            await self.state_machine.transition(
+                project_id, WorkflowState.FAILED, error_message=str(err)
+            )
+            if self.app:
+                session = await self.db.get_project(project_id)
+                if session:
+                    await self.app.bot.send_message(
+                        chat_id=session.chat_id,
+                        text=f"⚠️ *An error occurred during visual style generation:*\n`{err}`",
+                        parse_mode=ParseMode.MARKDOWN,
+                    )
+
+    async def _send_style_results(
+        self,
+        chat_id: int,
+        style: AnimationStyle,
+        sample_frame_path: Path,
+        project_id: str,
+    ) -> None:
+        """Send formatted style overview and rendered Scene 1 sample image to chat."""
+        if not self.app:
+            return
+
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    "✅ Approve Style",
+                    callback_data=f"approve_style:{project_id}",
+                )
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        caption = (
+            f"🎨 *Visual Style Design: {style.style_name}*\n\n"
+            f"📋 *Art Direction:*\n{style.visual_description}\n\n"
+            "💬 *Next Steps:*\n"
+            "• Click *Approve Style* below to generate full scene animations & assemble the video.\n"
+            "• Or *reply with your feedback* to adjust colors, aesthetic, or visual metaphors."
+        )
+
+        if sample_frame_path.exists() and sample_frame_path.stat().st_size > 0:
+            try:
+                photo_bytes = sample_frame_path.read_bytes()
+                # Telegram photo captions have a 1024 character limit
+                if len(caption) <= 1024:
+                    await self.app.bot.send_photo(
+                        chat_id=chat_id,
+                        photo=photo_bytes,
+                        caption=caption,
+                        reply_markup=reply_markup,
+                        parse_mode=ParseMode.MARKDOWN,
+                    )
+                    return
+                else:
+                    # Send photo first, followed by text breakdown and buttons
+                    await self.app.bot.send_photo(
+                        chat_id=chat_id,
+                        photo=photo_bytes,
+                        caption=f"🎨 *Scene 1 Sample Frame: {style.style_name}*",
+                        parse_mode=ParseMode.MARKDOWN,
+                    )
+            except Exception as photo_err:  # noqa: BLE001
+                logger.warning(
+                    "Failed to send sample photo: %s. Falling back to text.", photo_err
+                )
+
+        await self._send_message_chunks(
+            chat_id=chat_id,
+            text=caption,
+            reply_markup=reply_markup,
+        )
+
+    async def _run_full_animation_pipeline(self, project_id: str) -> None:
+        """Generate animations for all scenes, render video clips, and assemble the master MP4 video."""
+        try:
+            session = await self.db.get_project(project_id)
+            if not session or not session.script or not session.style:
+                logger.error(
+                    "Cannot run full animation pipeline: project, script, or style missing for %s",
+                    project_id,
+                )
+                return
+
+            await self.state_machine.transition(project_id, WorkflowState.ANIMATING)
+
+            if self.app:
+                await self.app.bot.send_message(
+                    chat_id=session.chat_id,
+                    text="🎬 *Generating animations for all scenes and rendering video clips...*",
+                    parse_mode=ParseMode.MARKDOWN,
+                )
+
+            anim_dir = self.settings.animations_dir / project_id
+            anim_dir.mkdir(parents=True, exist_ok=True)
+            render_dir = self.settings.renders_dir / project_id
+            render_dir.mkdir(parents=True, exist_ok=True)
+
+            # Check if Scene 1 was already generated during the styling approval stage
+            sample_scene_1: SceneAnimation | None = None
+            scene_1_html_path = anim_dir / "scene_1.html"
+            if scene_1_html_path.exists() and session.script.scenes:
+                scene_1 = session.script.scenes[0]
+                sample_scene_1 = SceneAnimation(
+                    scene_number=1,
+                    title=scene_1.title,
+                    html_content=scene_1_html_path.read_text(encoding="utf-8"),
+                    duration_seconds=scene_1.duration_seconds
+                    or self.settings.default_scene_duration_seconds,
+                )
+
+            # Generate SVG + HTML Canvas code for all scenes in parallel
+            storyboard = await self.animator.animate_storyboard(
+                topic=session.topic,
+                script=session.script,
+                style=session.style,
+                sample_scene_1=sample_scene_1,
+            )
+
+            # Save HTML animation codes
+            for scene_anim in storyboard.scenes:
+                html_path = anim_dir / f"scene_{scene_anim.scene_number}.html"
+                html_path.write_text(scene_anim.html_content, encoding="utf-8")
+
+            # Render scene video clips concurrently in parallel
+            scene_video_paths = await self.renderer.render_scenes_parallel(
+                scenes=storyboard.scenes,
+                output_dir=render_dir,
+                concurrency=3,
+            )
+
+            # Assemble final master MP4 video
+            final_video_path = render_dir / f"final_video_{project_id}.mp4"
+            await self.renderer.assemble_video(
+                scene_video_paths=scene_video_paths,
+                output_video_path=final_video_path,
+            )
+
+            storyboard.final_video_path = str(final_video_path)
+            storyboard.sample_frame_path = session.sample_frame_path
+
+            await self.db.save_storyboard(
+                project_id=project_id,
+                storyboard=storyboard,
+                final_video_path=str(final_video_path),
+            )
+
+            await self.state_machine.transition(project_id, WorkflowState.COMPLETED)
+
+            # Send final video to user via Telegram
+            if self.app and final_video_path.exists():
+                caption = (
+                    f"🎉 *Your Educational Video is Ready!* ✨\n\n"
+                    f"🎬 *Topic:* {session.topic}\n"
+                    f"🎨 *Style:* {session.style.style_name}\n"
+                    f"📊 *Scenes:* {len(storyboard.scenes)} scenes assembled."
+                )
+                video_bytes = final_video_path.read_bytes()
+                await self.app.bot.send_video(
+                    chat_id=session.chat_id,
+                    video=video_bytes,
+                    caption=caption,
+                    parse_mode=ParseMode.MARKDOWN,
+                )
+
+        except Exception as err:
+            logger.exception(
+                "Error during full animation pipeline for project %s", project_id
+            )
+            await self.state_machine.transition(
+                project_id, WorkflowState.FAILED, error_message=str(err)
+            )
+            if self.app:
+                session = await self.db.get_project(project_id)
+                if session:
+                    await self.app.bot.send_message(
+                        chat_id=session.chat_id,
+                        text=f"⚠️ *An error occurred during video rendering and assembly:*\n`{err}`",
+                        parse_mode=ParseMode.MARKDOWN,
+                    )

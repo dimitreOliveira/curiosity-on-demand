@@ -8,7 +8,11 @@ from core.state_machine import InvalidStateTransitionError, PipelineStateMachine
 
 @pytest.mark.asyncio
 async def test_database_crud_lifecycle(
-    memory_db, sample_research_report, sample_script
+    memory_db,
+    sample_research_report,
+    sample_script,
+    sample_animation_style,
+    sample_storyboard,
 ):
     """Test full database lifecycle for creating and updating project state, research, and script."""
     # 1. Create project
@@ -38,12 +42,32 @@ async def test_database_crud_lifecycle(
     assert updated_script is not None
     assert updated_script.script is not None
     assert updated_script.script.topic == sample_script.topic
-    assert len(updated_script.script.scenes) == 3
+    # 5. Save animation style
+    updated_style = await memory_db.save_style(
+        project.project_id,
+        sample_animation_style,
+        sample_frame_path="/tmp/sample.png",
+    )
+    assert updated_style is not None
+    assert updated_style.style is not None
+    assert updated_style.style.style_name == sample_animation_style.style_name
+    assert updated_style.sample_frame_path == "/tmp/sample.png"
+
+    # 6. Save storyboard
+    updated_sb = await memory_db.save_storyboard(
+        project.project_id,
+        sample_storyboard,
+        final_video_path="/tmp/final.mp4",
+    )
+    assert updated_sb is not None
+    assert updated_sb.storyboard is not None
+    assert len(updated_sb.storyboard.scenes) == 3
+    assert updated_sb.final_video_path == "/tmp/final.mp4"
 
 
 @pytest.mark.asyncio
 async def test_state_machine_valid_transitions(memory_db):
-    """Test valid sequential state transitions through the pipeline."""
+    """Test valid sequential state transitions through the research, scripting, and animation pipeline."""
     sm = PipelineStateMachine(db=memory_db)
     project = await memory_db.create_project(
         user_id=1, chat_id=1, topic="Deep Sea Creatures"
@@ -81,9 +105,28 @@ async def test_state_machine_valid_transitions(memory_db):
     # SCRIPTING -> AWAITING_SCRIPT_APPROVAL
     await sm.transition(project.project_id, WorkflowState.AWAITING_SCRIPT_APPROVAL)
 
-    # AWAITING_SCRIPT_APPROVAL -> COMPLETED (Approval)
-    p5 = await sm.transition(project.project_id, WorkflowState.COMPLETED)
-    assert p5.state == WorkflowState.COMPLETED
+    # AWAITING_SCRIPT_APPROVAL -> STYLING (Approval)
+    p5 = await sm.transition(project.project_id, WorkflowState.STYLING)
+    assert p5.state == WorkflowState.STYLING
+
+    # STYLING -> AWAITING_STYLE_APPROVAL
+    p6 = await sm.transition(project.project_id, WorkflowState.AWAITING_STYLE_APPROVAL)
+    assert p6.state == WorkflowState.AWAITING_STYLE_APPROVAL
+
+    # AWAITING_STYLE_APPROVAL -> STYLING (Feedback loop)
+    p6_feedback = await sm.transition(project.project_id, WorkflowState.STYLING)
+    assert p6_feedback.state == WorkflowState.STYLING
+
+    # STYLING -> AWAITING_STYLE_APPROVAL
+    await sm.transition(project.project_id, WorkflowState.AWAITING_STYLE_APPROVAL)
+
+    # AWAITING_STYLE_APPROVAL -> ANIMATING (Approval)
+    p7 = await sm.transition(project.project_id, WorkflowState.ANIMATING)
+    assert p7.state == WorkflowState.ANIMATING
+
+    # ANIMATING -> COMPLETED (Finalization)
+    p8 = await sm.transition(project.project_id, WorkflowState.COMPLETED)
+    assert p8.state == WorkflowState.COMPLETED
 
 
 @pytest.mark.asyncio

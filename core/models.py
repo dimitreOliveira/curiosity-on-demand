@@ -8,13 +8,16 @@ from pydantic import BaseModel, Field
 
 
 class WorkflowState(str, Enum):
-    """Execution states for the video research and scripting state machine."""
+    """Execution states for the video research, scripting, and animation state machine."""
 
     IDLE = "IDLE"
     RESEARCHING = "RESEARCHING"
     AWAITING_RESEARCH_APPROVAL = "AWAITING_RESEARCH_APPROVAL"
     SCRIPTING = "SCRIPTING"
     AWAITING_SCRIPT_APPROVAL = "AWAITING_SCRIPT_APPROVAL"
+    STYLING = "STYLING"
+    AWAITING_STYLE_APPROVAL = "AWAITING_STYLE_APPROVAL"
+    ANIMATING = "ANIMATING"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
 
@@ -64,6 +67,14 @@ class ScriptScene(BaseModel):
     summary: str = Field(
         description="Concise summary of the concept and content in this scene"
     )
+    description: str = Field(
+        default="",
+        description="Detailed visual description of the visual elements, motion, metaphors, transitions, diagrams, and graphics to appear on screen for this scene",
+    )
+    duration_seconds: int = Field(
+        default=10,
+        description="Estimated duration of this scene in seconds based on narration word count and target video length",
+    )
     narration: str = Field(description="Spoken voiceover narration text for this scene")
 
 
@@ -80,8 +91,69 @@ class Script(BaseModel):
     )
 
 
+class AnimationStyle(BaseModel):
+    """Visual theme and design aesthetic chosen for video animations."""
+
+    style_name: str = Field(
+        description="Descriptive name of the visual style (e.g. 'Minimalist Vector Blueprint', 'Dark Neon Cybernetic', 'Vibrant Flat Infographic')"
+    )
+    visual_description: str = Field(
+        description="Detailed description of visual aesthetics, composition, lighting, backgrounds, and art direction"
+    )
+    color_palette: list[str] = Field(
+        default_factory=list,
+        description="List of primary and accent hex color codes used across all scenes",
+    )
+    font_family: str = Field(
+        default="Inter, sans-serif",
+        description="Typography and font stack for on-screen titles, equations, and annotations",
+    )
+    animation_guidelines: str = Field(
+        description="Principles and motion design guidelines for SVG and Canvas animations in this style"
+    )
+
+
+class SceneAnimation(BaseModel):
+    """Self-contained SVG + HTML canvas code and configuration for a single scene."""
+
+    scene_number: int = Field(
+        description="Sequential index of this scene matching the script"
+    )
+    title: str = Field(description="Title of this scene")
+    html_content: str = Field(
+        description="Full, standalone executable HTML code containing CSS, SVG, and HTML5 Canvas JS animations"
+    )
+    duration_seconds: int = Field(
+        default=10,
+        description="Playback duration in seconds for this scene",
+    )
+    notes: str | None = Field(
+        default=None,
+        description="Visual design explanation and metaphor notes for this scene",
+    )
+
+
+class AnimationStoryboard(BaseModel):
+    """Collection of animations for all scenes in a video project."""
+
+    topic: str = Field(description="The video topic")
+    style: AnimationStyle = Field(description="The approved visual animation style")
+    scenes: list[SceneAnimation] = Field(
+        default_factory=list,
+        description="Ordered list of scene animations",
+    )
+    sample_frame_path: str | None = Field(
+        default=None,
+        description="Filesystem path to the rendered Scene 1 sample frame image",
+    )
+    final_video_path: str | None = Field(
+        default=None,
+        description="Filesystem path to the assembled final MP4 video",
+    )
+
+
 class ProjectSession(BaseModel):
-    """Pipeline project session tracking state, research, and script results."""
+    """Pipeline project session tracking state, research, script, and animation results."""
 
     project_id: str = Field(
         default_factory=lambda: str(uuid4()),
@@ -98,6 +170,18 @@ class ProjectSession(BaseModel):
     )
     script: Script | None = Field(
         default=None, description="Generated scene-by-scene narration script"
+    )
+    style: AnimationStyle | None = Field(
+        default=None, description="Selected animation visual style"
+    )
+    storyboard: AnimationStoryboard | None = Field(
+        default=None, description="Generated animations for all scenes"
+    )
+    sample_frame_path: str | None = Field(
+        default=None, description="Path to rendered sample frame image"
+    )
+    final_video_path: str | None = Field(
+        default=None, description="Path to assembled final MP4 video"
     )
     error_message: str | None = Field(
         default=None, description="Error message if workflow failed"

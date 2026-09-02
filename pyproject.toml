@@ -8,6 +8,8 @@ dependencies = [
     "aiosqlite>=0.22.1",
     "google-genai>=2.20.0",
     "greenlet>=3.5.5",
+    "imageio-ffmpeg>=0.6.0",
+    "playwright>=1.62.0",
     "pydantic>=2.13.5",
     "pydantic-settings>=2.15.0",
     "python-dotenv>=1.2.3",
@@ -30,3 +32,7 @@ dev = [
 pythonpath = ["."]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+
+[tool.codespell]
+skip = "./storage,./.venv,./.git"
+

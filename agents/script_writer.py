@@ -9,25 +9,31 @@ from core.models import ResearchReport, Script
 logger = logging.getLogger(__name__)
 
 SCRIPT_WRITER_SYSTEM_PROMPT = """You are a Master Scriptwriter and Educational Storyteller for Curiosity On Demand, a high-production educational channel.
-Your mission is to transform structured research into an engaging, scene-by-scene narration script.
+Your mission is to transform structured research into an engaging, scene-by-scene narration script with detailed, cinematic visual choreography and accurate pacing for animators.
 
 Your principles:
 1. Narrative Flow & Pacing:
    - Scene 1 (The Hook): Hook the audience immediately with an intriguing premise, paradox, visual thought experiment, or high-stakes question.
    - Middle Scenes (The Core Journey): Walk the viewer through key mechanisms, historical context, surprising insights, and intuitive analogies based on the research.
    - Final Scene (The Resolution): Deliver a memorable conclusion, profound takeaway, or philosophical perspective that ties everything together.
-2. Scene Breakdown:
+2. Scene Breakdown & Timing:
    - Divide the script into distinct, logical scenes or segments (typically 4 to 8 scenes depending on the target duration).
+   - Natural spoken educational narration is paced at roughly 130–150 words per minute (~2.2 words per second).
    - For each scene, provide:
      * scene_number: Sequential integer (1, 2, 3...)
      * title: Catchy, descriptive scene title
-     * summary: Clear summary of what this segment covers
-     * narration: The exact, conversational, punchy voiceover script to be spoken aloud.
+     * summary: Clear summary of what this segment covers conceptually
+     * description: Rich, cinematic visual choreography. Specify:
+       - Focal Entities & Rigging: Specific actors, diagrams, machines, or metaphors and how their components move (e.g., oscillating limbs, rotating gears, pulsing energy fields).
+       - Environment & Lighting: Depth layers, background gradients, light beam sources, and color shifts.
+       - Dynamic Action & Climax: Motion trajectories, particle bursts, screen shakes, or metric callouts that trigger at key moments in the scene.
+     * duration_seconds: Integer estimated duration for this scene in seconds based on narration length and total target duration
+     * narration: The exact, conversational, punchy voiceover script to be spoken aloud. Provide sufficient narration depth to fill the scene's duration.
 3. Tone & Cadence:
    - Engaging, clear, accessible, and intellectually stimulating (in the style of Veritasium, Kurzgesagt, or 3Blue1Brown).
    - Use natural transitions between scenes.
 4. Handling Feedback & Revisions:
-   - When previous script and user feedback are provided, modify or rewrite scenes to address the feedback while maintaining consistent tone and cohesive narrative flow.
+   - When previous script and user feedback are provided, modify or rewrite scenes to address the feedback while maintaining consistent tone, timing, and cohesive narrative flow.
 """
 
 
@@ -68,7 +74,10 @@ class ScriptWriterAgent(BaseAgent):
 
         if feedback and previous_script:
             prev_scenes_text = "\n\n".join(
-                f"Scene {s.scene_number} - {s.title}:\nSummary: {s.summary}\nNarration: {s.narration}"
+                f"Scene {s.scene_number} - {s.title} ({s.duration_seconds}s):\n"
+                f"Summary: {s.summary}\n"
+                f"Visual Description: {s.description}\n"
+                f"Narration: {s.narration}"
                 for s in previous_script.scenes
             )
             prompt = (
@@ -81,13 +90,14 @@ class ScriptWriterAgent(BaseAgent):
                 f"CRITICAL USER FEEDBACK & REVISION INSTRUCTIONS:\n"
                 f"{feedback}\n\n"
                 f"Please produce a revised Script schema addressing the user's feedback while preserving "
-                f"the strong elements of the narration and adhering to the {target_duration} target."
+                f"the strong elements of the narration and budgeting scene duration_seconds to meet the {target_duration} target."
             )
         else:
             prompt = (
                 f"{research_context}\n\n"
                 f"Please craft a complete, engaging scene-by-scene narration Script for a {target_duration} educational video. "
-                f"Break down the topic into logical scenes, providing a summary and full spoken narration for each scene."
+                f"Break down the topic into logical scenes, providing a summary, detailed visual description for animators, "
+                f"duration_seconds budgeted to match the {target_duration} total, and full spoken narration for each scene."
             )
 
         script = await self.generate_structured(
@@ -96,6 +106,11 @@ class ScriptWriterAgent(BaseAgent):
             system_instruction=SCRIPT_WRITER_SYSTEM_PROMPT,
         )
 
-        # Guarantee topic matches
+        # Guarantee topic matches and ensure valid positive duration_seconds per scene
         script.topic = topic
+        for scene in script.scenes:
+            if scene.duration_seconds <= 0:
+                words = len(scene.narration.split())
+                scene.duration_seconds = max(5, int(words / 2.3) + 2)
+
         return script
