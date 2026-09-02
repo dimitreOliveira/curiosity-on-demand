@@ -45,6 +45,19 @@ class PipelineStateMachine:
         },
         WorkflowState.AWAITING_SCRIPT_APPROVAL: {
             WorkflowState.SCRIPTING,
+            WorkflowState.STYLING,
+            WorkflowState.FAILED,
+        },
+        WorkflowState.STYLING: {
+            WorkflowState.AWAITING_STYLE_APPROVAL,
+            WorkflowState.FAILED,
+        },
+        WorkflowState.AWAITING_STYLE_APPROVAL: {
+            WorkflowState.STYLING,
+            WorkflowState.ANIMATING,
+            WorkflowState.FAILED,
+        },
+        WorkflowState.ANIMATING: {
             WorkflowState.COMPLETED,
             WorkflowState.FAILED,
         },

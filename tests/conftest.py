@@ -5,7 +5,15 @@ import pytest_asyncio
 
 from config.settings import Settings
 from core.database import DatabaseManager
-from core.models import ResearchReport, ResearchSection, Script, ScriptScene
+from core.models import (
+    AnimationStoryboard,
+    AnimationStyle,
+    ResearchReport,
+    ResearchSection,
+    SceneAnimation,
+    Script,
+    ScriptScene,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -43,6 +51,10 @@ def mock_settings(tmp_path):
         RESEARCH_MODEL="gemini-3.7-flash",
         EVALUATOR_MODEL="gemini-3.7-flash",
         SCRIPT_MODEL="gemini-3.7-flash",
+        ANIMATOR_MODEL="gemini-3.7-flash",
+        VIDEO_WIDTH=1280,
+        VIDEO_HEIGHT=720,
+        DEFAULT_SCENE_DURATION_SECONDS=10,
         TELEGRAM_BOT_TOKEN="test_token",
         TELEGRAM_ALLOWED_USERS=[],
         STORAGE_DIR=storage_dir,
@@ -92,19 +104,89 @@ def sample_script():
                 scene_number=1,
                 title="The Light Switch Dilemma",
                 summary="Hook introducing the limit of classical bits versus quantum states.",
+                description="A visual metaphor featuring a mechanical light switch toggling between 0 and 1, which seamlessly transforms into a luminous glowing Bloch sphere with spinning quantum state vectors.",
+                duration_seconds=45,
                 narration="Imagine a light switch that is not just ON or OFF, but pointing in every direction simultaneously. Welcome to quantum physics.",
             ),
             ScriptScene(
                 scene_number=2,
                 title="Superposition & Entanglement",
                 summary="Explains the core physics mechanisms.",
+                description="Split screen comparing binary silicon transistors with two entangled glowing particles linked by vibrating geometric SVG energy beams.",
+                duration_seconds=60,
                 narration="In a classical computer, each bit is a binary 0 or 1. But a qubit can exist in a superposition of both.",
             ),
             ScriptScene(
                 scene_number=3,
                 title="The Quantum Horizon",
                 summary="Wrap-up on real-world applications and future implications.",
+                description="A futuristic crystalline quantum computing core surrounded by orbiting molecular simulations and complex cryptographic lock animations.",
+                duration_seconds=50,
                 narration="While quantum computers won't replace your laptop, they will unlock simulations once thought impossible.",
             ),
         ],
+    )
+
+
+@pytest.fixture
+def sample_animation_style():
+    """Sample AnimationStyle for testing."""
+    return AnimationStyle(
+        style_name="Dark Neon Quantum Blueprint",
+        visual_description="Sleek dark background (#0B0F19) with glowing cyan (#00F0FF) and magenta (#FF0055) vector schematics, particle orbits, and crisp mathematical coordinate grids.",
+        color_palette=["#0B0F19", "#00F0FF", "#FF0055", "#FFFFFF"],
+        font_family="Inter, sans-serif",
+        animation_guidelines="Smooth continuous rotation for quantum state vectors, pulsating energy nodes, dynamic SVG line tracing for entanglement links.",
+    )
+
+
+@pytest.fixture
+def sample_scene_animation():
+    """Sample SceneAnimation for testing."""
+    return SceneAnimation(
+        scene_number=1,
+        title="The Light Switch Dilemma",
+        html_content="""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body { margin: 0; background: #0B0F19; display: flex; justify-content: center; align-items: center; height: 100vh; overflow: hidden; font-family: sans-serif; }
+  #canvas { width: 1280px; height: 720px; }
+</style>
+</head>
+<body>
+<canvas id="canvas" width="1280" height="720"></canvas>
+<script>
+  const ctx = document.getElementById('canvas').getContext('2d');
+  ctx.fillStyle = '#00F0FF';
+  ctx.font = '36px sans-serif';
+  ctx.fillText('Quantum State Vector', 100, 100);
+</script>
+</body>
+</html>""",
+        duration_seconds=10,
+        notes="Introductory visual hook illustrating classical switch vs Bloch sphere.",
+    )
+
+
+@pytest.fixture
+def sample_storyboard(sample_animation_style, sample_scene_animation):
+    """Sample AnimationStoryboard for testing."""
+    scene_2 = SceneAnimation(
+        scene_number=2,
+        title="Superposition & Entanglement",
+        html_content="""<!DOCTYPE html><html><body><canvas id="c" width="1280" height="720"></canvas></body></html>""",
+        duration_seconds=10,
+    )
+    scene_3 = SceneAnimation(
+        scene_number=3,
+        title="The Quantum Horizon",
+        html_content="""<!DOCTYPE html><html><body><canvas id="c" width="1280" height="720"></canvas></body></html>""",
+        duration_seconds=10,
+    )
+    return AnimationStoryboard(
+        topic="How Quantum Computers Work",
+        style=sample_animation_style,
+        scenes=[sample_scene_animation, scene_2, scene_3],
     )

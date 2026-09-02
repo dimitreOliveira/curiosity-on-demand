@@ -44,6 +44,26 @@ class Settings(BaseSettings):
         alias="SCRIPT_MODEL",
         description="Gemini model for narration script generation",
     )
+    animator_model: str = Field(
+        default="gemini-3.7-flash",
+        alias="ANIMATOR_MODEL",
+        description="Gemini model for visual animation styling and code generation",
+    )
+    video_width: int = Field(
+        default=1280,
+        alias="VIDEO_WIDTH",
+        description="Rendered video width in pixels",
+    )
+    video_height: int = Field(
+        default=720,
+        alias="VIDEO_HEIGHT",
+        description="Rendered video height in pixels",
+    )
+    default_scene_duration_seconds: int = Field(
+        default=10,
+        alias="DEFAULT_SCENE_DURATION_SECONDS",
+        description="Default playback duration per scene in seconds",
+    )
     max_research_iterations: int = Field(
         default=3,
         alias="MAX_RESEARCH_ITERATIONS",
@@ -112,9 +132,21 @@ class Settings(BaseSettings):
         description="SQLite database file path for session and state tracking",
     )
 
+    @property
+    def renders_dir(self) -> Path:
+        """Directory for rendered frames, animations, and final video outputs."""
+        return self.storage_dir / "renders"
+
+    @property
+    def animations_dir(self) -> Path:
+        """Directory for saved scene HTML/SVG animation code files."""
+        return self.storage_dir / "animations"
+
     def ensure_directories(self) -> None:
         """Create necessary directories if they do not exist."""
         self.storage_dir.mkdir(parents=True, exist_ok=True)
+        self.renders_dir.mkdir(parents=True, exist_ok=True)
+        self.animations_dir.mkdir(parents=True, exist_ok=True)
         if self.sqlite_db_path.parent:
             self.sqlite_db_path.parent.mkdir(parents=True, exist_ok=True)
 

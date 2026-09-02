@@ -11,7 +11,7 @@ Curiosity On Demand is an automated educational video research and scripting pip
 
 **Key Components:**
 - `main.py`: Application entrypoint running the bot.
-- `agents/`: Autonomous agents (`base.py`, `researcher.py`, `evaluator.py`, `script_writer.py`).
+- `agents/`: Autonomous agents (`base.py`, `researcher.py`, `evaluator.py`, `script_writer.py`, `animation_planner.py`, `scene_animator.py`).
 - `core/`: FSM transitions (`state_machine.py`), Pydantic schemas (`models.py`), and DB models (`database.py`).
 - `services/`: Telegram bot integration (`telegram_bot.py`).
 - `notebooks/`: Testing and diagnostic notebooks (`agent_testing.ipynb`, `database_explorer.ipynb`).

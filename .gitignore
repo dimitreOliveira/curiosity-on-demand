@@ -210,5 +210,4 @@ __marimo__/
 .DS_Store
 
 # Local storage and database artifacts
-storage/*.db
-storage/*.sqlite*
+storage/

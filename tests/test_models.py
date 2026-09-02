@@ -74,10 +74,13 @@ def test_script_and_scenes_serialization(sample_script):
         scene_number=1,
         title="Intro",
         summary="Hook",
+        description="Visual introduction with spinning particles",
         narration="Hello world",
     )
     assert scene.scene_number == 1
     assert scene.title == "Intro"
+    assert scene.description == "Visual introduction with spinning particles"
+    assert scene.duration_seconds == 10
 
     json_str = sample_script.model_dump_json()
     reconstructed = Script.model_validate_json(json_str)
@@ -85,7 +88,42 @@ def test_script_and_scenes_serialization(sample_script):
     assert reconstructed.topic == sample_script.topic
     assert reconstructed.summary == sample_script.summary
     assert len(reconstructed.scenes) == len(sample_script.scenes)
+    assert reconstructed.scenes[0].description == sample_script.scenes[0].description
+    assert (
+        reconstructed.scenes[0].duration_seconds
+        == sample_script.scenes[0].duration_seconds
+    )
     assert reconstructed.scenes[0].narration == sample_script.scenes[0].narration
+
+
+def test_animation_style_and_storyboard_serialization(
+    sample_animation_style, sample_scene_animation, sample_storyboard
+):
+    """Test AnimationStyle, SceneAnimation, and AnimationStoryboard serialization."""
+    from core.models import (
+        AnimationStoryboard,
+        AnimationStyle,
+        SceneAnimation,
+    )
+
+    # Style serialization
+    style_json = sample_animation_style.model_dump_json()
+    reconstructed_style = AnimationStyle.model_validate_json(style_json)
+    assert reconstructed_style.style_name == sample_animation_style.style_name
+    assert reconstructed_style.color_palette == sample_animation_style.color_palette
+
+    # Scene animation serialization
+    scene_json = sample_scene_animation.model_dump_json()
+    reconstructed_scene = SceneAnimation.model_validate_json(scene_json)
+    assert reconstructed_scene.scene_number == 1
+    assert "canvas" in reconstructed_scene.html_content
+
+    # Storyboard serialization
+    storyboard_json = sample_storyboard.model_dump_json()
+    reconstructed_sb = AnimationStoryboard.model_validate_json(storyboard_json)
+    assert reconstructed_sb.topic == sample_storyboard.topic
+    assert len(reconstructed_sb.scenes) == 3
+    assert reconstructed_sb.style.style_name == sample_animation_style.style_name
 
 
 def test_workflow_states():
@@ -96,6 +134,9 @@ def test_workflow_states():
         "AWAITING_RESEARCH_APPROVAL",
         "SCRIPTING",
         "AWAITING_SCRIPT_APPROVAL",
+        "STYLING",
+        "AWAITING_STYLE_APPROVAL",
+        "ANIMATING",
         "COMPLETED",
         "FAILED",
     }
