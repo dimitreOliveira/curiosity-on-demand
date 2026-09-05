@@ -298,3 +298,62 @@ class ProjectSession(BaseModel):
     )
     created_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
     updated_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
+
+
+class ComponentUsage(BaseModel):
+    """Resource and cost usage statistics for a specific pipeline component."""
+
+    component: str = Field(description="Name of the pipeline component or agent")
+    model_name: str = Field(
+        default="", description="Primary model or tool utilized by this component"
+    )
+    prompt_tokens: int = Field(
+        default=0, description="Total input/prompt tokens consumed"
+    )
+    output_tokens: int = Field(
+        default=0, description="Total output/candidate tokens consumed"
+    )
+    total_tokens: int = Field(default=0, description="Total tokens consumed")
+    grounding_queries: int = Field(
+        default=0, description="Number of Google Search Grounding queries executed"
+    )
+    audio_duration_seconds: float = Field(
+        default=0.0, description="Total synthesized speech audio duration in seconds"
+    )
+    estimated_cost_usd: float = Field(
+        default=0.0, description="Estimated total cost in USD for this component"
+    )
+    call_count: int = Field(
+        default=0, description="Number of API/LLM calls made by this component"
+    )
+
+
+class ProjectUsageSummary(BaseModel):
+    """Aggregated resource and cost usage summary for an entire video project session."""
+
+    project_id: str = Field(description="Unique project identifier")
+    total_cost_usd: float = Field(
+        default=0.0, description="Total estimated cost in USD across all components"
+    )
+    total_prompt_tokens: int = Field(
+        default=0, description="Total input prompt tokens across all components"
+    )
+    total_output_tokens: int = Field(
+        default=0, description="Total output tokens across all components"
+    )
+    total_tokens: int = Field(
+        default=0, description="Total tokens consumed across all components"
+    )
+    total_grounding_queries: int = Field(
+        default=0, description="Total Google Search Grounding queries executed"
+    )
+    total_audio_duration_seconds: float = Field(
+        default=0.0, description="Total synthesized audio duration in seconds"
+    )
+    total_calls: int = Field(
+        default=0, description="Total API invocations across all components"
+    )
+    components: list[ComponentUsage] = Field(
+        default_factory=list,
+        description="Per-component breakdown of resource usage and cost",
+    )

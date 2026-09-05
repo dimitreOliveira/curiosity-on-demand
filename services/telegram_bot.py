@@ -25,6 +25,11 @@ from agents.scene_animator import SceneAnimatorAgent
 from agents.script_writer import ScriptWriterAgent
 from config.settings import Settings, get_settings
 from core.audio_utils import get_wav_duration
+from core.cost_tracker import (
+    PipelineComponent,
+    get_cost_tracker,
+    track_component,
+)
 from core.database import DatabaseManager, get_db_manager
 from core.models import (
     AnimationStyle,
@@ -436,18 +441,19 @@ class TelegramBotService:
                 )
 
                 # Step 1: Researcher agent gathers search-grounded text findings
-                round_notes = await self.researcher.conduct_research(
-                    topic=session.topic,
-                    feedback=feedback,
-                    previous_research=accumulated_notes
-                    if accumulated_notes
-                    else (
-                        session.research_report.summary
-                        if session.research_report
-                        else None
-                    ),
-                    target_duration=target_duration,
-                )
+                with track_component(project_id, PipelineComponent.RESEARCH):
+                    round_notes = await self.researcher.conduct_research(
+                        topic=session.topic,
+                        feedback=feedback,
+                        previous_research=accumulated_notes
+                        if accumulated_notes
+                        else (
+                            session.research_report.summary
+                            if session.research_report
+                            else None
+                        ),
+                        target_duration=target_duration,
+                    )
 
                 if accumulated_notes:
                     accumulated_notes = (
@@ -459,13 +465,14 @@ class TelegramBotService:
                     accumulated_notes = round_notes
 
                 # Step 2: Evaluator agent filters noise, structures report, and checks sufficiency
-                eval_result = await self.evaluator.evaluate_research(
-                    topic=session.topic,
-                    accumulated_research=accumulated_notes,
-                    target_duration=target_duration,
-                    iteration=iteration,
-                    max_iterations=max_iterations,
-                )
+                with track_component(project_id, PipelineComponent.EVALUATION):
+                    eval_result = await self.evaluator.evaluate_research(
+                        topic=session.topic,
+                        accumulated_research=accumulated_notes,
+                        target_duration=target_duration,
+                        iteration=iteration,
+                        max_iterations=max_iterations,
+                    )
 
                 final_report = eval_result.report
 
@@ -594,13 +601,14 @@ class TelegramBotService:
                 session.topic, self.settings.default_video_duration_minutes
             )
 
-            script = await self.script_writer.generate_script(
-                topic=session.topic,
-                research_report=session.research_report,
-                target_duration=target_duration,
-                feedback=user_feedback,
-                previous_script=session.script,
-            )
+            with track_component(project_id, PipelineComponent.SCRIPT_WRITING):
+                script = await self.script_writer.generate_script(
+                    topic=session.topic,
+                    research_report=session.research_report,
+                    target_duration=target_duration,
+                    feedback=user_feedback,
+                    previous_script=session.script,
+                )
 
             await self.db.save_script(project_id, script)
             await self.state_machine.transition(
@@ -685,13 +693,14 @@ class TelegramBotService:
             audio_dir = self.settings.audio_dir / project_id
             audio_dir.mkdir(parents=True, exist_ok=True)
 
-            plan, sample_audio = await self.narrator.determine_plan_and_sample(
-                topic=session.topic,
-                script=session.script,
-                feedback=user_feedback,
-                previous_plan=session.narration_plan,
-                output_dir=audio_dir,
-            )
+            with track_component(project_id, PipelineComponent.NARRATION_PLANNING):
+                plan, sample_audio = await self.narrator.determine_plan_and_sample(
+                    topic=session.topic,
+                    script=session.script,
+                    feedback=user_feedback,
+                    previous_plan=session.narration_plan,
+                    output_dir=audio_dir,
+                )
 
             await self.db.save_narration_plan(
                 project_id=project_id,
@@ -818,12 +827,13 @@ class TelegramBotService:
 
             await self.state_machine.transition(project_id, WorkflowState.STYLING)
 
-            style = await self.planner.plan_style(
-                topic=session.topic,
-                script=session.script,
-                feedback=user_feedback,
-                previous_style=session.style,
-            )
+            with track_component(project_id, PipelineComponent.STYLE_PLANNING):
+                style = await self.planner.plan_style(
+                    topic=session.topic,
+                    script=session.script,
+                    feedback=user_feedback,
+                    previous_style=session.style,
+                )
 
             scene_1 = session.script.scenes[0] if session.script.scenes else None
             if not scene_1:
@@ -835,12 +845,13 @@ class TelegramBotService:
                 if audio_dur > 0:
                     s1_duration = audio_dur
 
-            scene_1_anim = await self.animator.animate_scene(
-                topic=session.topic,
-                scene=scene_1,
-                style=style,
-                duration_seconds=s1_duration,
-            )
+            with track_component(project_id, PipelineComponent.SCENE_ANIMATION):
+                scene_1_anim = await self.animator.animate_scene(
+                    topic=session.topic,
+                    scene=scene_1,
+                    style=style,
+                    duration_seconds=s1_duration,
+                )
 
             # Persist Scene 1 HTML code
             anim_dir = self.settings.animations_dir / project_id
@@ -1018,12 +1029,13 @@ class TelegramBotService:
                         mime_type="audio/wav",
                         file_size_bytes=Path(session.sample_audio_path).stat().st_size,
                     )
-                narration_storyboard = await self.narrator.generate_full_narration(
-                    topic=session.topic,
-                    plan=session.narration_plan,
-                    output_dir=audio_dir,
-                    sample_scene_1=sample_s1_audio,
-                )
+                with track_component(project_id, PipelineComponent.VOICE_SYNTHESIS):
+                    narration_storyboard = await self.narrator.generate_full_narration(
+                        topic=session.topic,
+                        plan=session.narration_plan,
+                        output_dir=audio_dir,
+                        sample_scene_1=sample_s1_audio,
+                    )
                 await self.db.save_narration_storyboard(
                     project_id=project_id,
                     storyboard=narration_storyboard,
@@ -1031,13 +1043,14 @@ class TelegramBotService:
                 )
 
             # Generate SVG + HTML Canvas code for all scenes in parallel
-            storyboard = await self.animator.animate_storyboard(
-                topic=session.topic,
-                script=session.script,
-                style=session.style,
-                sample_scene_1=sample_scene_1,
-                narration_storyboard=narration_storyboard,
-            )
+            with track_component(project_id, PipelineComponent.SCENE_ANIMATION):
+                storyboard = await self.animator.animate_storyboard(
+                    topic=session.topic,
+                    script=session.script,
+                    style=session.style,
+                    sample_scene_1=sample_scene_1,
+                    narration_storyboard=narration_storyboard,
+                )
 
             # Save HTML animation codes
             for scene_anim in storyboard.scenes:
@@ -1088,6 +1101,10 @@ class TelegramBotService:
 
             # Send final video to user via Telegram
             if self.app and final_video_path.exists():
+                cost_summary = await get_cost_tracker().get_project_summary(project_id)
+                cost_badge = get_cost_tracker().format_short_badge(cost_summary)
+                cost_report = get_cost_tracker().format_telegram_report(cost_summary)
+
                 caption_lines = [
                     "🎉 *Your Educational Video is Ready!* ✨",
                     "",
@@ -1101,6 +1118,7 @@ class TelegramBotService:
                 caption_lines.append(
                     f"📊 *Scenes:* {len(storyboard.scenes)} scenes assembled."
                 )
+                caption_lines.append(cost_badge)
                 caption = "\n".join(caption_lines)
 
                 video_bytes = final_video_path.read_bytes()
@@ -1108,6 +1126,13 @@ class TelegramBotService:
                     chat_id=session.chat_id,
                     video=video_bytes,
                     caption=caption,
+                    parse_mode=ParseMode.MARKDOWN,
+                )
+
+                # Send detailed generation cost & token breakdown message
+                await self.app.bot.send_message(
+                    chat_id=session.chat_id,
+                    text=cost_report,
                     parse_mode=ParseMode.MARKDOWN,
                 )
 

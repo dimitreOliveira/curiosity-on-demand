@@ -71,12 +71,23 @@ def mock_settings(tmp_path):
     )
 
 
+@pytest.fixture(autouse=True)
+def reset_cost_tracker():
+    """Reset global cost tracker between tests to avoid stale DB engine references."""
+    from core.cost_tracker import CostTracker, set_global_cost_tracker
+
+    set_global_cost_tracker(CostTracker())
+    yield
+    set_global_cost_tracker(CostTracker())
+
+
 @pytest_asyncio.fixture
 async def memory_db():
     """Create an in-memory SQLite database manager for isolated testing."""
     db = DatabaseManager(db_url="sqlite+aiosqlite:///:memory:")
     await db.init_db()
-    return db
+    yield db
+    await db.engine.dispose()
 
 
 @pytest.fixture

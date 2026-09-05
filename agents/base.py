@@ -1,7 +1,7 @@
 """Base agent abstraction wrapping the Google GenAI SDK with structured output validation."""
 
 import logging
-from typing import TypeVar, cast
+from typing import Any, TypeVar, cast
 
 from google import genai
 from google.genai import types
@@ -32,6 +32,56 @@ class BaseAgent:
         else:
             self.client = genai.Client()
 
+    async def _record_response_usage(
+        self,
+        response: Any,
+        model_name: str,
+        audio_duration_seconds: float = 0.0,
+    ) -> None:
+        """Record token usage and search grounding query counts if tracking context is active."""
+        try:
+            from core.cost_tracker import (
+                current_component,
+                current_project_id,
+                get_cost_tracker,
+            )
+
+            project_id = current_project_id.get()
+            if not project_id:
+                return
+
+            component = current_component.get() or "LLM Generation"
+
+            prompt_tokens = 0
+            output_tokens = 0
+            grounding_queries = 0
+
+            usage = getattr(response, "usage_metadata", None)
+            if usage:
+                prompt_tokens = getattr(usage, "prompt_token_count", 0) or 0
+                output_tokens = getattr(usage, "candidates_token_count", 0) or 0
+
+            candidates = getattr(response, "candidates", None)
+            if candidates and len(candidates) > 0:
+                candidate = candidates[0]
+                grounding_meta = getattr(candidate, "grounding_metadata", None)
+                if grounding_meta:
+                    queries = getattr(grounding_meta, "web_search_queries", None)
+                    if queries:
+                        grounding_queries = len(queries)
+
+            await get_cost_tracker().record_usage(
+                project_id=project_id,
+                component=component,
+                model_name=model_name,
+                prompt_tokens=prompt_tokens,
+                output_tokens=output_tokens,
+                grounding_queries=grounding_queries,
+                audio_duration_seconds=audio_duration_seconds,
+            )
+        except Exception as err:  # noqa: BLE001
+            logger.debug("Failed to record usage in BaseAgent: %s", err)
+
     async def generate_text(
         self,
         prompt: str,
@@ -55,6 +105,8 @@ class BaseAgent:
             contents=prompt,
             config=config,
         )
+
+        await self._record_response_usage(response, target_model)
 
         if not response or not response.text:
             raise RuntimeError(
@@ -93,6 +145,8 @@ class BaseAgent:
             contents=prompt,
             config=config,
         )
+
+        await self._record_response_usage(response, target_model)
 
         if not response:
             raise RuntimeError(

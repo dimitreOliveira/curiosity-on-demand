@@ -36,12 +36,21 @@ class NarratorAgent(BaseAgent):
         output_dir: Path | None = None,
     ) -> tuple[NarrationPlan, SceneAudio]:
         """Formulate complete narration plan and synthesize Scene 1 voice sample for user approval."""
-        plan = await self.planner.plan_narration(
-            topic=topic,
-            script=script,
-            feedback=feedback,
-            previous_plan=previous_plan,
+        from core.cost_tracker import (
+            PipelineComponent,
+            current_project_id,
+            track_component,
         )
+
+        proj_id = current_project_id.get() or ""
+
+        with track_component(proj_id, PipelineComponent.NARRATION_PLANNING):
+            plan = await self.planner.plan_narration(
+                topic=topic,
+                script=script,
+                feedback=feedback,
+                previous_plan=previous_plan,
+            )
 
         if not plan.scenes:
             raise RuntimeError(
@@ -53,12 +62,13 @@ class NarratorAgent(BaseAgent):
         sample_path = target_dir / "scene_1_sample.wav"
 
         scene_1_plan = plan.scenes[0]
-        sample_audio = await self.generator.generate_scene_audio(
-            topic=topic,
-            plan=plan,
-            scene=scene_1_plan,
-            output_path=sample_path,
-        )
+        with track_component(proj_id, PipelineComponent.VOICE_SYNTHESIS):
+            sample_audio = await self.generator.generate_scene_audio(
+                topic=topic,
+                plan=plan,
+                scene=scene_1_plan,
+                output_path=sample_path,
+            )
 
         return plan, sample_audio
 
@@ -86,14 +96,23 @@ class NarratorAgent(BaseAgent):
         concurrency: int | None = None,
     ) -> NarrationStoryboard:
         """Generate audio clips for all scenes in parallel using NarrationGeneratorAgent."""
-        target_dir = output_dir or (self.settings.audio_dir / "storyboard")
-        return await self.generator.generate_storyboard_audio(
-            topic=topic,
-            plan=plan,
-            output_dir=target_dir,
-            sample_scene_1=sample_scene_1,
-            concurrency=concurrency,
+        from core.cost_tracker import (
+            PipelineComponent,
+            current_project_id,
+            track_component,
         )
+
+        proj_id = current_project_id.get() or ""
+        target_dir = output_dir or (self.settings.audio_dir / "storyboard")
+
+        with track_component(proj_id, PipelineComponent.VOICE_SYNTHESIS):
+            return await self.generator.generate_storyboard_audio(
+                topic=topic,
+                plan=plan,
+                output_dir=target_dir,
+                sample_scene_1=sample_scene_1,
+                concurrency=concurrency,
+            )
 
 
 __all__ = [

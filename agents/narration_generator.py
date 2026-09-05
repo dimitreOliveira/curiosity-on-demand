@@ -155,6 +155,18 @@ class NarrationGeneratorAgent(BaseAgent):
             output_path,
             len(data_bytes),
         )
+
+        # Record TTS speech generation usage
+        try:
+            audio_duration = get_wav_duration(output_path)
+            await self._record_response_usage(
+                response=response,
+                model_name=self.tts_model,
+                audio_duration_seconds=audio_duration,
+            )
+        except Exception as err:  # noqa: BLE001
+            logger.debug("Failed to record TTS usage: %s", err)
+
         return output_path
 
     async def generate_scene_audio(
