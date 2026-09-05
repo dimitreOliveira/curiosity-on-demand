@@ -7,6 +7,7 @@ from pathlib import Path
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message, Update
 from telegram.constants import ParseMode
+from telegram.error import TelegramError
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -18,15 +19,20 @@ from telegram.ext import (
 
 from agents.animation_planner import AnimationPlannerAgent
 from agents.evaluator import EvaluatorAgent
+from agents.narrator import NarratorAgent
 from agents.researcher import ResearcherAgent
 from agents.scene_animator import SceneAnimatorAgent
 from agents.script_writer import ScriptWriterAgent
 from config.settings import Settings, get_settings
+from core.audio_utils import get_wav_duration
 from core.database import DatabaseManager, get_db_manager
 from core.models import (
     AnimationStyle,
+    NarrationPlan,
+    NarrationStoryboard,
     ResearchReport,
     SceneAnimation,
+    SceneAudio,
     Script,
     WorkflowState,
 )
@@ -58,6 +64,7 @@ class TelegramBotService:
         self.researcher = ResearcherAgent(settings=self.settings)
         self.evaluator = EvaluatorAgent(settings=self.settings)
         self.script_writer = ScriptWriterAgent(settings=self.settings)
+        self.narrator = NarratorAgent(settings=self.settings)
         self.planner = AnimationPlannerAgent(settings=self.settings)
         self.animator = SceneAnimatorAgent(settings=self.settings)
         self.renderer = AnimationRenderer(settings=self.settings)
@@ -251,6 +258,20 @@ class TelegramBotService:
                 )
                 return
 
+            if active_project.state == WorkflowState.AWAITING_NARRATION_APPROVAL:
+                # User provided feedback on the narration voice style
+                await update.message.reply_text(
+                    f"📝 *Narration feedback received:*\n_{text}_\n\n"
+                    f"🎙️ Revising voice talent, style, and audio tags...",
+                    parse_mode=ParseMode.MARKDOWN,
+                )
+                asyncio.create_task(
+                    self._run_narration_pipeline(
+                        active_project.project_id, user_feedback=text
+                    )
+                )
+                return
+
             if active_project.state == WorkflowState.AWAITING_STYLE_APPROVAL:
                 # User provided feedback on the animation visual style
                 await update.message.reply_text(
@@ -268,6 +289,7 @@ class TelegramBotService:
             if active_project.state in (
                 WorkflowState.RESEARCHING,
                 WorkflowState.SCRIPTING,
+                WorkflowState.NARRATING,
                 WorkflowState.STYLING,
                 WorkflowState.ANIMATING,
             ):
@@ -335,7 +357,28 @@ class TelegramBotService:
 
             if isinstance(query.message, Message):
                 await query.message.reply_text(
-                    "✅ *Script approved!*\n\n🎨 Designing animation style and generating Scene 1 sample frame...",
+                    "✅ *Script approved!*\n\n🎙️ Formulating voice talent direction and synthesizing Scene 1 voice sample...",
+                    parse_mode=ParseMode.MARKDOWN,
+                )
+
+            asyncio.create_task(self._run_narration_pipeline(project_id))
+
+        elif data.startswith("approve_narration:"):
+            project_id = data.split(":", 1)[1]
+            project = await self.db.get_project(project_id)
+            if (
+                not project
+                or project.state != WorkflowState.AWAITING_NARRATION_APPROVAL
+            ):
+                if isinstance(query.message, Message):
+                    await query.message.reply_text(
+                        "ℹ️ This narration review is no longer active."
+                    )
+                return
+
+            if isinstance(query.message, Message):
+                await query.message.reply_text(
+                    "✅ *Voice & narration approved!*\n\n🎨 Designing animation style and generating Scene 1 sample frame...",
                     parse_mode=ParseMode.MARKDOWN,
                 )
 
@@ -624,6 +667,142 @@ class TelegramBotService:
             reply_markup=InlineKeyboardMarkup(keyboard),
         )
 
+    async def _run_narration_pipeline(
+        self, project_id: str, user_feedback: str | None = None
+    ) -> None:
+        """Execute NarrationPlanner and NarrationGenerator agents to formulate voice direction and synthesize Scene 1 audio sample."""
+        try:
+            session = await self.db.get_project(project_id)
+            if not session or not session.script:
+                logger.error(
+                    "Cannot run narration pipeline: project or script missing for %s",
+                    project_id,
+                )
+                return
+
+            await self.state_machine.transition(project_id, WorkflowState.NARRATING)
+
+            audio_dir = self.settings.audio_dir / project_id
+            audio_dir.mkdir(parents=True, exist_ok=True)
+
+            plan, sample_audio = await self.narrator.determine_plan_and_sample(
+                topic=session.topic,
+                script=session.script,
+                feedback=user_feedback,
+                previous_plan=session.narration_plan,
+                output_dir=audio_dir,
+            )
+
+            await self.db.save_narration_plan(
+                project_id=project_id,
+                plan=plan,
+                sample_audio_path=sample_audio.audio_path,
+            )
+            await self.state_machine.transition(
+                project_id, WorkflowState.AWAITING_NARRATION_APPROVAL
+            )
+
+            # Send voice sample and review buttons to user
+            await self._send_narration_results(
+                chat_id=session.chat_id,
+                plan=plan,
+                sample_audio=sample_audio,
+                project_id=project_id,
+            )
+
+        except Exception as err:
+            logger.exception(
+                "Error during voice narration generation for project %s", project_id
+            )
+            await self.state_machine.transition(
+                project_id, WorkflowState.FAILED, error_message=str(err)
+            )
+            if self.app:
+                session = await self.db.get_project(project_id)
+                if session:
+                    await self.app.bot.send_message(
+                        chat_id=session.chat_id,
+                        text=f"⚠️ *An error occurred during voice narration synthesis:*\n`{err}`",
+                        parse_mode=ParseMode.MARKDOWN,
+                    )
+
+    async def _send_narration_results(
+        self,
+        chat_id: int,
+        plan: NarrationPlan,
+        sample_audio: SceneAudio,
+        project_id: str,
+    ) -> None:
+        """Send Scene 1 voice sample and narration direction review prompt to chat."""
+        keyboard = [
+            [
+                InlineKeyboardButton(
+                    "✅ Approve Voice & Narration",
+                    callback_data=f"approve_narration:{project_id}",
+                )
+            ]
+        ]
+
+        text_lines = [
+            f"🎙️ *Voice Narration Plan: {plan.audio_profile_name}*",
+            f"🎭 *Archetype:* {plan.audio_profile_role}",
+            f"🗣️ *Voice:* `{plan.voice_name}`",
+            f"⏱️ *Scene 1 Sample Duration:* {sample_audio.duration_seconds:.1f}s",
+            "",
+            f"🎬 *Scene Setting & Vibe:*\n_{plan.scene_environment}_",
+            "",
+            f"📋 *Director's Notes:*\n{plan.directors_notes}",
+        ]
+
+        if plan.scenes and plan.scenes[0].enhanced_narration:
+            text_lines.extend(
+                [
+                    "",
+                    "🎧 *Scene 1 Enhanced Transcript:*",
+                    f"_{plan.scenes[0].enhanced_narration}_",
+                ]
+            )
+
+        text_lines.extend(
+            [
+                "",
+                "💬 *Next Steps:*",
+                "• Listen to the voice note above and click *Approve Voice & Narration* to proceed.",
+                "• Or *reply with your feedback* to change the voice, pacing, accent, or delivery.",
+            ]
+        )
+
+        full_text = "\n".join(text_lines)
+
+        audio_path = Path(sample_audio.audio_path)
+        if self.app and audio_path.exists():
+            audio_bytes = audio_path.read_bytes()
+            try:
+                await self.app.bot.send_voice(
+                    chat_id=chat_id,
+                    voice=audio_bytes,
+                    caption=f"🎙️ *Scene 1 Voice Preview* ({sample_audio.duration_seconds:.1f}s)",
+                    parse_mode=ParseMode.MARKDOWN,
+                )
+            except (TelegramError, OSError):
+                try:
+                    await self.app.bot.send_audio(
+                        chat_id=chat_id,
+                        audio=audio_bytes,
+                        title="Scene 1 Voice Preview",
+                        performer=plan.audio_profile_name,
+                        caption=f"🎙️ *Scene 1 Voice Preview* ({sample_audio.duration_seconds:.1f}s)",
+                        parse_mode=ParseMode.MARKDOWN,
+                    )
+                except (TelegramError, OSError) as send_err:
+                    logger.warning("Could not send audio preview message: %s", send_err)
+
+        await self._send_message_chunks(
+            chat_id=chat_id,
+            text=full_text,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+        )
+
     async def _run_style_pipeline(
         self, project_id: str, user_feedback: str | None = None
     ) -> None:
@@ -650,11 +829,17 @@ class TelegramBotService:
             if not scene_1:
                 raise RuntimeError("Cannot animate: script contains no scenes.")
 
+            s1_duration = scene_1.duration_seconds
+            if session.sample_audio_path and Path(session.sample_audio_path).exists():
+                audio_dur = get_wav_duration(session.sample_audio_path)
+                if audio_dur > 0:
+                    s1_duration = audio_dur
+
             scene_1_anim = await self.animator.animate_scene(
                 topic=session.topic,
                 scene=scene_1,
                 style=style,
-                duration_seconds=scene_1.duration_seconds,
+                duration_seconds=s1_duration,
             )
 
             # Persist Scene 1 HTML code
@@ -797,12 +982,52 @@ class TelegramBotService:
             scene_1_html_path = anim_dir / "scene_1.html"
             if scene_1_html_path.exists() and session.script.scenes:
                 scene_1 = session.script.scenes[0]
+                s1_duration = (
+                    scene_1.duration_seconds
+                    or self.settings.default_scene_duration_seconds
+                )
+                if (
+                    session.sample_audio_path
+                    and Path(session.sample_audio_path).exists()
+                ):
+                    audio_dur = get_wav_duration(session.sample_audio_path)
+                    if audio_dur > 0:
+                        s1_duration = audio_dur
+
                 sample_scene_1 = SceneAnimation(
                     scene_number=1,
                     title=scene_1.title,
                     html_content=scene_1_html_path.read_text(encoding="utf-8"),
-                    duration_seconds=scene_1.duration_seconds
-                    or self.settings.default_scene_duration_seconds,
+                    duration_seconds=s1_duration,
+                )
+
+            # Synthesize all scene voiceovers if narration plan exists
+            narration_storyboard: NarrationStoryboard | None = None
+            if session.narration_plan:
+                audio_dir = self.settings.audio_dir / project_id
+                audio_dir.mkdir(parents=True, exist_ok=True)
+                sample_s1_audio: SceneAudio | None = None
+                if (
+                    session.sample_audio_path
+                    and Path(session.sample_audio_path).exists()
+                ):
+                    sample_s1_audio = SceneAudio(
+                        scene_number=1,
+                        audio_path=session.sample_audio_path,
+                        duration_seconds=get_wav_duration(session.sample_audio_path),
+                        mime_type="audio/wav",
+                        file_size_bytes=Path(session.sample_audio_path).stat().st_size,
+                    )
+                narration_storyboard = await self.narrator.generate_full_narration(
+                    topic=session.topic,
+                    plan=session.narration_plan,
+                    output_dir=audio_dir,
+                    sample_scene_1=sample_s1_audio,
+                )
+                await self.db.save_narration_storyboard(
+                    project_id=project_id,
+                    storyboard=narration_storyboard,
+                    final_audio_path=narration_storyboard.full_audio_path,
                 )
 
             # Generate SVG + HTML Canvas code for all scenes in parallel
@@ -811,6 +1036,7 @@ class TelegramBotService:
                 script=session.script,
                 style=session.style,
                 sample_scene_1=sample_scene_1,
+                narration_storyboard=narration_storyboard,
             )
 
             # Save HTML animation codes
@@ -825,11 +1051,28 @@ class TelegramBotService:
                 concurrency=3,
             )
 
-            # Assemble final master MP4 video
+            # Assemble final master MP4 video with narration audio muxed in
             final_video_path = render_dir / f"final_video_{project_id}.mp4"
+            final_audio_p = (
+                Path(narration_storyboard.full_audio_path)
+                if narration_storyboard and narration_storyboard.full_audio_path
+                else None
+            )
+            scene_audio_paths = (
+                [
+                    s.audio_path
+                    for s in narration_storyboard.scenes_audio
+                    if s.audio_path
+                ]
+                if narration_storyboard
+                else None
+            )
             await self.renderer.assemble_video(
                 scene_video_paths=scene_video_paths,
                 output_video_path=final_video_path,
+                audio_path=final_audio_p,
+                scene_audio_paths=scene_audio_paths,
+                narration_storyboard=narration_storyboard,
             )
 
             storyboard.final_video_path = str(final_video_path)
@@ -845,12 +1088,21 @@ class TelegramBotService:
 
             # Send final video to user via Telegram
             if self.app and final_video_path.exists():
-                caption = (
-                    f"🎉 *Your Educational Video is Ready!* ✨\n\n"
-                    f"🎬 *Topic:* {session.topic}\n"
-                    f"🎨 *Style:* {session.style.style_name}\n"
+                caption_lines = [
+                    "🎉 *Your Educational Video is Ready!* ✨",
+                    "",
+                    f"🎬 *Topic:* {session.topic}",
+                    f"🎨 *Style:* {session.style.style_name}",
+                ]
+                if session.narration_plan:
+                    caption_lines.append(
+                        f"🎙️ *Voice Talent:* {session.narration_plan.audio_profile_name} (`{session.narration_plan.voice_name}`)"
+                    )
+                caption_lines.append(
                     f"📊 *Scenes:* {len(storyboard.scenes)} scenes assembled."
                 )
+                caption = "\n".join(caption_lines)
+
                 video_bytes = final_video_path.read_bytes()
                 await self.app.bot.send_video(
                     chat_id=session.chat_id,

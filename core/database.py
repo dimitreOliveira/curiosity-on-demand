@@ -15,6 +15,8 @@ from config.settings import get_settings
 from core.models import (
     AnimationStoryboard,
     AnimationStyle,
+    NarrationPlan,
+    NarrationStoryboard,
     ProjectSession,
     ResearchReport,
     Script,
@@ -45,14 +47,22 @@ class ProjectRecord(Base):
     # JSON-encoded payload for structured narration script
     script_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # JSON-encoded payload for narration plan and voice styling
+    narration_plan_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # JSON-encoded payload for full scene speech audio storyboard
+    narration_storyboard_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     # JSON-encoded payload for chosen animation visual style
     style_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # JSON-encoded payload for full scene animations storyboard
     storyboard_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    # File paths for rendered sample frame image and assembled video
+    # File paths for rendered sample frame image, sample audio, final audio, and assembled video
     sample_frame_path: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    sample_audio_path: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    final_audio_path: Mapped[str | None] = mapped_column(String(256), nullable=True)
     final_video_path: Mapped[str | None] = mapped_column(String(256), nullable=True)
 
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -76,6 +86,16 @@ class ProjectRecord(Base):
         script = (
             Script.model_validate_json(self.script_json) if self.script_json else None
         )
+        narration_plan = (
+            NarrationPlan.model_validate_json(self.narration_plan_json)
+            if self.narration_plan_json
+            else None
+        )
+        narration_storyboard = (
+            NarrationStoryboard.model_validate_json(self.narration_storyboard_json)
+            if self.narration_storyboard_json
+            else None
+        )
         style = (
             AnimationStyle.model_validate_json(self.style_json)
             if self.style_json
@@ -95,9 +115,13 @@ class ProjectRecord(Base):
             state=WorkflowState(self.state),
             research_report=research_report,
             script=script,
+            narration_plan=narration_plan,
+            narration_storyboard=narration_storyboard,
             style=style,
             storyboard=storyboard,
             sample_frame_path=self.sample_frame_path,
+            sample_audio_path=self.sample_audio_path,
+            final_audio_path=self.final_audio_path,
             final_video_path=self.final_video_path,
             error_message=self.error_message,
             created_at=self.created_at.isoformat()
@@ -136,6 +160,16 @@ class DatabaseManager:
                     await conn.execute(
                         text("ALTER TABLE projects ADD COLUMN script_json TEXT")
                     )
+                if "narration_plan_json" not in columns:
+                    await conn.execute(
+                        text("ALTER TABLE projects ADD COLUMN narration_plan_json TEXT")
+                    )
+                if "narration_storyboard_json" not in columns:
+                    await conn.execute(
+                        text(
+                            "ALTER TABLE projects ADD COLUMN narration_storyboard_json TEXT"
+                        )
+                    )
                 if "style_json" not in columns:
                     await conn.execute(
                         text("ALTER TABLE projects ADD COLUMN style_json TEXT")
@@ -148,6 +182,18 @@ class DatabaseManager:
                     await conn.execute(
                         text(
                             "ALTER TABLE projects ADD COLUMN sample_frame_path VARCHAR(256)"
+                        )
+                    )
+                if "sample_audio_path" not in columns:
+                    await conn.execute(
+                        text(
+                            "ALTER TABLE projects ADD COLUMN sample_audio_path VARCHAR(256)"
+                        )
+                    )
+                if "final_audio_path" not in columns:
+                    await conn.execute(
+                        text(
+                            "ALTER TABLE projects ADD COLUMN final_audio_path VARCHAR(256)"
                         )
                     )
                 if "final_video_path" not in columns:
@@ -254,6 +300,46 @@ class DatabaseManager:
             if not record:
                 return None
             record.script_json = script.model_dump_json()
+            record.updated_at = datetime.now(UTC)
+            await session.commit()
+            return record.to_session()
+
+    async def save_narration_plan(
+        self,
+        project_id: str,
+        plan: NarrationPlan,
+        sample_audio_path: str | None = None,
+    ) -> ProjectSession | None:
+        """Persist structured narration plan and optional Scene 1 sample audio path."""
+        async with self.session_factory() as session:
+            stmt = select(ProjectRecord).where(ProjectRecord.project_id == project_id)
+            result = await session.execute(stmt)
+            record = result.scalar_one_or_none()
+            if not record:
+                return None
+            record.narration_plan_json = plan.model_dump_json()
+            if sample_audio_path is not None:
+                record.sample_audio_path = sample_audio_path
+            record.updated_at = datetime.now(UTC)
+            await session.commit()
+            return record.to_session()
+
+    async def save_narration_storyboard(
+        self,
+        project_id: str,
+        storyboard: NarrationStoryboard,
+        final_audio_path: str | None = None,
+    ) -> ProjectSession | None:
+        """Persist full scene speech audio storyboard and optional final audio path."""
+        async with self.session_factory() as session:
+            stmt = select(ProjectRecord).where(ProjectRecord.project_id == project_id)
+            result = await session.execute(stmt)
+            record = result.scalar_one_or_none()
+            if not record:
+                return None
+            record.narration_storyboard_json = storyboard.model_dump_json()
+            if final_audio_path is not None:
+                record.final_audio_path = final_audio_path
             record.updated_at = datetime.now(UTC)
             await session.commit()
             return record.to_session()

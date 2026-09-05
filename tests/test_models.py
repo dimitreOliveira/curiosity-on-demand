@@ -134,6 +134,8 @@ def test_workflow_states():
         "AWAITING_RESEARCH_APPROVAL",
         "SCRIPTING",
         "AWAITING_SCRIPT_APPROVAL",
+        "NARRATING",
+        "AWAITING_NARRATION_APPROVAL",
         "STYLING",
         "AWAITING_STYLE_APPROVAL",
         "ANIMATING",
@@ -142,3 +144,29 @@ def test_workflow_states():
     }
     actual_states = {s.value for s in WorkflowState}
     assert expected_states == actual_states
+
+
+def test_narration_models_serialization(
+    sample_narration_plan, sample_scene_audio, sample_narration_storyboard
+):
+    """Test NarrationPlan, SceneAudio, and NarrationStoryboard serialization."""
+    from core.models import NarrationPlan, NarrationStoryboard, SceneAudio
+
+    # Plan serialization
+    plan_json = sample_narration_plan.model_dump_json()
+    reconstructed_plan = NarrationPlan.model_validate_json(plan_json)
+    assert reconstructed_plan.voice_name == "Zephyr"
+    assert len(reconstructed_plan.scenes) == 3
+    assert reconstructed_plan.scenes[0].title == "The Light Switch Dilemma"
+
+    # Audio serialization
+    audio_json = sample_scene_audio.model_dump_json()
+    reconstructed_audio = SceneAudio.model_validate_json(audio_json)
+    assert reconstructed_audio.scene_number == 1
+    assert reconstructed_audio.duration_seconds == 1.0
+
+    # Storyboard serialization
+    sb_json = sample_narration_storyboard.model_dump_json()
+    reconstructed_sb = NarrationStoryboard.model_validate_json(sb_json)
+    assert reconstructed_sb.topic == sample_narration_storyboard.topic
+    assert len(reconstructed_sb.scenes_audio) == 3

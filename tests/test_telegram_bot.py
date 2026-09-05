@@ -247,9 +247,9 @@ async def test_telegram_bot_run_script_pipeline(
 async def test_telegram_bot_approve_script_callback(
     mock_settings, memory_db, sample_research_report, sample_script
 ):
-    """Test clicking Approve Script callback triggers style pipeline."""
+    """Test clicking Approve Script callback triggers narration pipeline."""
     bot_service = TelegramBotService(settings=mock_settings, db=memory_db)
-    bot_service._run_style_pipeline = AsyncMock()
+    bot_service._run_narration_pipeline = AsyncMock()
 
     session = await memory_db.create_project(
         user_id=123, chat_id=456, topic="Quantum Computing"
@@ -468,7 +468,7 @@ async def test_telegram_bot_run_full_animation_pipeline(
         output_video_path.write_bytes(b"FakeSceneVideoBytes")
         return output_video_path
 
-    async def mock_assemble(scene_video_paths, output_video_path):
+    async def mock_assemble(scene_video_paths, output_video_path, *args, **kwargs):
         output_video_path.parent.mkdir(parents=True, exist_ok=True)
         output_video_path.write_bytes(b"FakeMasterVideoBytes")
         return output_video_path
@@ -662,3 +662,183 @@ async def test_telegram_bot_send_style_results_summarized(
     assert "Typography:" not in caption
     assert "Animation Guidelines:" not in caption
     assert sample_animation_style.animation_guidelines not in caption
+
+
+@pytest.mark.asyncio
+async def test_telegram_bot_run_narration_pipeline(
+    mock_settings,
+    memory_db,
+    sample_script,
+    sample_narration_plan,
+    sample_scene_audio,
+):
+    """Test narration pipeline generating plan, sample audio, and transitioning to AWAITING_NARRATION_APPROVAL."""
+    bot_service = TelegramBotService(settings=mock_settings, db=memory_db)
+    bot_service.narrator.determine_plan_and_sample = AsyncMock(
+        return_value=(sample_narration_plan, sample_scene_audio)
+    )
+    bot_service._send_narration_results = AsyncMock()
+
+    mock_app = MagicMock()
+    mock_app.bot.send_message = AsyncMock()
+    bot_service.app = mock_app
+
+    session = await memory_db.create_project(
+        user_id=123, chat_id=456, topic="Quantum Computing"
+    )
+    await memory_db.save_script(session.project_id, sample_script)
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.RESEARCHING
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.AWAITING_RESEARCH_APPROVAL
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.SCRIPTING
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.AWAITING_SCRIPT_APPROVAL
+    )
+
+    await bot_service._run_narration_pipeline(session.project_id)
+
+    updated = await memory_db.get_project(session.project_id)
+    assert updated is not None
+    assert updated.state == WorkflowState.AWAITING_NARRATION_APPROVAL
+    assert updated.narration_plan is not None
+    assert updated.narration_plan.voice_name == "Zephyr"
+    assert updated.sample_audio_path == sample_scene_audio.audio_path
+
+    bot_service.narrator.determine_plan_and_sample.assert_called_once()
+    bot_service._send_narration_results.assert_called_once_with(
+        chat_id=456,
+        plan=sample_narration_plan,
+        sample_audio=sample_scene_audio,
+        project_id=session.project_id,
+    )
+
+
+@pytest.mark.asyncio
+async def test_telegram_bot_send_narration_results(
+    mock_settings, memory_db, sample_narration_plan, sample_scene_audio
+):
+    """Test _send_narration_results sending voice message preview with approval buttons."""
+    bot_service = TelegramBotService(settings=mock_settings, db=memory_db)
+    mock_app = MagicMock()
+    mock_app.bot.send_voice = AsyncMock()
+    mock_app.bot.send_message = AsyncMock()
+    bot_service.app = mock_app
+
+    await bot_service._send_narration_results(
+        chat_id=456,
+        plan=sample_narration_plan,
+        sample_audio=sample_scene_audio,
+        project_id="proj-123",
+    )
+
+    assert mock_app.bot.send_voice.call_count == 1
+    assert mock_app.bot.send_message.call_count >= 1
+
+    call_args = mock_app.bot.send_voice.call_args[1]
+    assert call_args["chat_id"] == 456
+    assert "Scene 1 Voice Preview" in call_args["caption"]
+
+
+@pytest.mark.asyncio
+async def test_telegram_bot_approve_narration_callback(
+    mock_settings, memory_db, sample_script, sample_narration_plan
+):
+    """Test clicking Approve Narration callback triggers style pipeline."""
+    bot_service = TelegramBotService(settings=mock_settings, db=memory_db)
+    bot_service._run_style_pipeline = AsyncMock()
+
+    session = await memory_db.create_project(
+        user_id=123, chat_id=456, topic="Quantum Computing"
+    )
+    await memory_db.save_script(session.project_id, sample_script)
+    await memory_db.save_narration_plan(session.project_id, sample_narration_plan)
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.RESEARCHING
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.AWAITING_RESEARCH_APPROVAL
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.SCRIPTING
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.AWAITING_SCRIPT_APPROVAL
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.NARRATING
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.AWAITING_NARRATION_APPROVAL
+    )
+
+    update = MagicMock()
+    query = MagicMock()
+    query.data = f"approve_narration:{session.project_id}"
+    query.answer = AsyncMock()
+    query.message = MagicMock(spec=Message)
+    query.message.reply_text = AsyncMock()
+    update.callback_query = query
+
+    await bot_service._handle_callback_query(update, MagicMock())
+
+    query.answer.assert_called_once()
+    query.message.reply_text.assert_called_once()
+    assert "approved" in query.message.reply_text.call_args[0][0].lower()
+
+
+@pytest.mark.asyncio
+async def test_telegram_bot_narration_feedback_flow(
+    mock_settings, memory_db, sample_script, sample_narration_plan
+):
+    """Test user submitting feedback during AWAITING_NARRATION_APPROVAL restarts narration pipeline."""
+    bot_service = TelegramBotService(settings=mock_settings, db=memory_db)
+    bot_service._run_narration_pipeline = AsyncMock()
+
+    session = await memory_db.create_project(
+        user_id=123, chat_id=456, topic="Quantum Computing"
+    )
+    await memory_db.save_script(session.project_id, sample_script)
+    await memory_db.save_narration_plan(session.project_id, sample_narration_plan)
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.RESEARCHING
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.AWAITING_RESEARCH_APPROVAL
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.SCRIPTING
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.AWAITING_SCRIPT_APPROVAL
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.NARRATING
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.AWAITING_NARRATION_APPROVAL
+    )
+
+    update = MagicMock()
+    update.effective_user.id = 123
+    update.effective_user.username = "testuser"
+    update.effective_chat.id = 456
+    update.message = MagicMock(spec=Message)
+    update.message.text = "Please make the tone more playful and use Puck voice"
+    update.message.reply_text = AsyncMock()
+
+    await bot_service._handle_message(update, MagicMock())
+
+    update.message.reply_text.assert_called_once()
+    assert (
+        "narration feedback received"
+        in update.message.reply_text.call_args[0][0].lower()
+    )
+    bot_service._run_narration_pipeline.assert_called_once_with(
+        session.project_id,
+        user_feedback="Please make the tone more playful and use Puck voice",
+    )

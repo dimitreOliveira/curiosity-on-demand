@@ -15,6 +15,8 @@ class WorkflowState(str, Enum):
     AWAITING_RESEARCH_APPROVAL = "AWAITING_RESEARCH_APPROVAL"
     SCRIPTING = "SCRIPTING"
     AWAITING_SCRIPT_APPROVAL = "AWAITING_SCRIPT_APPROVAL"
+    NARRATING = "NARRATING"
+    AWAITING_NARRATION_APPROVAL = "AWAITING_NARRATION_APPROVAL"
     STYLING = "STYLING"
     AWAITING_STYLE_APPROVAL = "AWAITING_STYLE_APPROVAL"
     ANIMATING = "ANIMATING"
@@ -123,8 +125,8 @@ class SceneAnimation(BaseModel):
     html_content: str = Field(
         description="Full, standalone executable HTML code containing CSS, SVG, and HTML5 Canvas JS animations"
     )
-    duration_seconds: int = Field(
-        default=10,
+    duration_seconds: float = Field(
+        default=10.0,
         description="Playback duration in seconds for this scene",
     )
     notes: str | None = Field(
@@ -152,8 +154,104 @@ class AnimationStoryboard(BaseModel):
     )
 
 
+class SceneNarrationPlan(BaseModel):
+    """Directorial performance plan and audio tags for an individual scene."""
+
+    scene_number: int = Field(
+        description="Sequential index of this scene matching the script"
+    )
+    title: str = Field(description="Title or theme of this scene")
+    original_narration: str = Field(
+        description="The original voiceover narration text from the script"
+    )
+    enhanced_narration: str = Field(
+        description="Voiceover narration annotated with inline emotional and delivery audio tags (e.g., [excitedly], [whispers], [amazed], [gasp], [serious], [very fast], [sighs])"
+    )
+    tone: str = Field(
+        description="Emotional vibe and vocal attitude for this scene (e.g., 'Intrigued and hushed whisper', 'Upbeat energetic revelation')"
+    )
+    pace: str = Field(
+        description="Pacing and cadence direction for this scene (e.g., 'Brisk delivery with punchy consonants', 'Deliberate cadence with dramatic pauses')"
+    )
+    scene_directors_notes: str | None = Field(
+        default=None,
+        description="Specific directorial advice, accent nuances, or breathing instructions for this scene",
+    )
+
+
+class NarrationPlan(BaseModel):
+    """Comprehensive directorial plan and voice casting system for video narration."""
+
+    voice_name: str = Field(
+        default="Zephyr",
+        description="Prebuilt voice selected from supported Gemini TTS voices (e.g., Zephyr, Puck, Charon, Kore, Fenrir, Aoede, Enceladus, Sadaltager, Achird)",
+    )
+    audio_profile_name: str = Field(
+        description="Grounded character persona name (e.g., 'Dr. Julian Vance', 'Elena Rostova')"
+    )
+    audio_profile_role: str = Field(
+        description="Archetype and professional identity of the narrator (e.g., 'Enthusiastic Documentary Host', 'Knowledgeable Science Explorer')"
+    )
+    scene_environment: str = Field(
+        description="Physical studio environment and atmosphere setting the stage and acoustic vibe"
+    )
+    directors_notes: str = Field(
+        description="Core directorial performance notes detailing style, vocal smile, projection, accent, and articulation"
+    )
+    sample_context: str = Field(
+        description="Contextual scene setup establishing how the voice talent naturally enters the scene"
+    )
+    scenes: list[SceneNarrationPlan] = Field(
+        default_factory=list,
+        description="Scene-by-scene enhanced narrations with inline audio tags and directorial guidance",
+    )
+
+
+class SceneAudio(BaseModel):
+    """Synthesized speech audio clip metadata for a single scene."""
+
+    scene_number: int = Field(description="Sequential index of the scene")
+    audio_path: str = Field(
+        description="Filesystem path to the generated WAV audio file"
+    )
+    duration_seconds: float = Field(
+        default=0.0, description="Exact playback duration of the audio clip in seconds"
+    )
+    mime_type: str = Field(
+        default="audio/wav", description="MIME type of the generated audio file"
+    )
+    file_size_bytes: int = Field(
+        default=0, description="Size of the audio file in bytes"
+    )
+
+
+class NarrationStoryboard(BaseModel):
+    """Collection of synthesized audio clips for all scenes in a video project."""
+
+    topic: str = Field(description="The video topic")
+    plan: NarrationPlan = Field(
+        description="The approved narration plan and voice styling"
+    )
+    scenes_audio: list[SceneAudio] = Field(
+        default_factory=list,
+        description="Ordered list of generated scene audio clips",
+    )
+    sample_audio_path: str | None = Field(
+        default=None,
+        description="Filesystem path to the Scene 1 sample audio preview",
+    )
+    full_audio_path: str | None = Field(
+        default=None,
+        description="Filesystem path to the assembled full voiceover audio file",
+    )
+    total_duration_seconds: float = Field(
+        default=0.0,
+        description="Total duration of all scene voiceover clips combined in seconds",
+    )
+
+
 class ProjectSession(BaseModel):
-    """Pipeline project session tracking state, research, script, and animation results."""
+    """Pipeline project session tracking state, research, script, narration, and animation results."""
 
     project_id: str = Field(
         default_factory=lambda: str(uuid4()),
@@ -171,6 +269,12 @@ class ProjectSession(BaseModel):
     script: Script | None = Field(
         default=None, description="Generated scene-by-scene narration script"
     )
+    narration_plan: NarrationPlan | None = Field(
+        default=None, description="Directorial narration plan and voice styling"
+    )
+    narration_storyboard: NarrationStoryboard | None = Field(
+        default=None, description="Generated speech audio clips for all scenes"
+    )
     style: AnimationStyle | None = Field(
         default=None, description="Selected animation visual style"
     )
@@ -179,6 +283,12 @@ class ProjectSession(BaseModel):
     )
     sample_frame_path: str | None = Field(
         default=None, description="Path to rendered sample frame image"
+    )
+    sample_audio_path: str | None = Field(
+        default=None, description="Path to rendered Scene 1 sample audio file"
+    )
+    final_audio_path: str | None = Field(
+        default=None, description="Path to assembled master voiceover audio file"
     )
     final_video_path: str | None = Field(
         default=None, description="Path to assembled final MP4 video"

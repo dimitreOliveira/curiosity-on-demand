@@ -10,6 +10,7 @@ from config.settings import Settings, get_settings
 from core.models import (
     AnimationStoryboard,
     AnimationStyle,
+    NarrationStoryboard,
     SceneAnimation,
     Script,
     ScriptScene,
@@ -24,12 +25,16 @@ Your mission is to generate standalone, executable, high-fidelity HTML5 Canvas /
 ### 📐 Creative Coding Architecture & Visual Pillars (CRITICAL):
 Every generated canvas animation MUST incorporate the following 6 structural pillars:
 
-1. **Decoupled Delta-Time Loop & Narrative State Machine:**
+1. **Decoupled Delta-Time Loop & Continuous Living Motion (CRITICAL):**
    - Always decouple physics/state updates from drawing:
      `function update(dt) { ... }` and modular render passes `drawBackground()`, `drawEnvironment()`, `drawActors()`, `drawFX()`, `drawHUD()`.
    - Use standard `requestAnimationFrame(loop)` with delta-time: `const dt = Math.min((now - lastTime) / 1000, 0.1);`.
-   - Structure narrative progression using an explicit state machine (e.g. `state = 'intro' | 'action' | 'climax' | 'resolution'`) and a `stateTimer` calibrated to the scene's `duration_seconds`.
-   - Ensure the animation is lively, fluid, and visually rich from frame 0 through the entire playback duration.
+   - Structure narrative progression using an explicit state machine (e.g. `state = 'intro' | 'action' | 'climax' | 'resolution'`).
+   - **STRICT NON-FREEZING MANDATE:** The canvas animation must NEVER stop updating, freeze, or hold a static frame. If the narrative timeline or keyframes conclude, the scene must:
+     a) Seamlessly loop its narrative cycle (`time = time % DURATION`), or
+     b) Transition into continuous, living procedural idle motion (ambient particles, breathing character rigs, pulsating glows, oscillating waves, subtle camera drifts) so the canvas is ALWAYS actively moving at every single frame.
+   - Use normalized progress: `const progress = Math.min(time / DURATION, 1.0);` combined with continuous ambient oscillators `Math.sin(time * speed)` so physics and ambient FX never freeze even after narrative progress reaches 1.0.
+   - NEVER call `cancelAnimationFrame` or write early `return` statements that stop drawing.
 
 2. **Articulated Procedural Rigging & Trigonometry:**
    - Draw characters, animals, humans, machines, anatomical diagrams, or celestial objects procedurally using `ctx.save()`, `ctx.translate(x, y)`, `ctx.rotate(angle)`, and `ctx.restore()`.
@@ -107,16 +112,19 @@ class SceneAnimatorAgent(BaseAgent):
         topic: str,
         scene: ScriptScene,
         style: AnimationStyle,
-        duration_seconds: int | None = None,
+        duration_seconds: float | None = None,
     ) -> SceneAnimation:
         """Generate standalone HTML5 Canvas animation code for an individual scene unconstrained by JSON schema."""
-        target_duration = (
-            duration_seconds
-            or scene.duration_seconds
-            or self.settings.default_scene_duration_seconds
+        target_duration = round(
+            float(
+                duration_seconds
+                or scene.duration_seconds
+                or self.settings.default_scene_duration_seconds
+            ),
+            2,
         )
         logger.info(
-            "Generating animation code for Scene %d ('%s', %ds) in style '%s'",
+            "Generating animation code for Scene %d ('%s', %.2fs) in style '%s'",
             scene.scene_number,
             scene.title,
             target_duration,
@@ -140,12 +148,12 @@ class SceneAnimatorAgent(BaseAgent):
             f"- Concept Summary: {scene.summary}\n"
             f"- Visual Description: {scene.description}\n"
             f"- Spoken Narration (for pacing/context only): {scene.narration}\n"
-            f"- Playback Duration: {target_duration} seconds\n\n"
+            f"- Playback Duration: {target_duration:.2f} seconds (timed to match voiceover narration)\n\n"
             f"Instructions:\n"
             f"Generate the complete, standalone, high-fidelity HTML5 Canvas animation for this scene. "
             f"Strictly reflect the chosen visual style and color palette. "
             f"Implement procedural entity rigging, multi-layer volumetric lighting, physics kinematics, "
-            f"dynamic particle emitters/trails, and a decoupled delta-time state machine calibrated for {target_duration} seconds. "
+            f"dynamic particle emitters/trails, and a decoupled delta-time state machine calibrated for {target_duration:.2f} seconds. "
             f"REMINDER: Voiceover narration will play as spoken audio. DO NOT put narration sentences or subtitles on screen. "
             f"Return ONLY the executable <!DOCTYPE html> document."
         )
@@ -171,10 +179,17 @@ class SceneAnimatorAgent(BaseAgent):
         script: Script,
         style: AnimationStyle,
         sample_scene_1: SceneAnimation | None = None,
-        default_duration: int | None = None,
+        default_duration: float | None = None,
+        scene_durations: dict[int, float] | None = None,
+        narration_storyboard: NarrationStoryboard | None = None,
         concurrency: int | None = None,
     ) -> AnimationStoryboard:
-        """Generate animations for all scenes in parallel, reusing sample_scene_1 if already generated."""
+        """Generate animations for all scenes in parallel using native animation durations.
+
+        Visual animations are rendered at their native duration (100% active motion).
+        The video renderer then stretches or compresses playback speed via FFmpeg
+        to perfectly match the narration audio duration with zero frozen frames.
+        """
         max_concurrency = concurrency or self.DEFAULT_CONCURRENCY
         logger.info(
             "Generating storyboard (%d scenes, concurrency=%d) for topic '%s' in style '%s'",
@@ -187,21 +202,26 @@ class SceneAnimatorAgent(BaseAgent):
         semaphore = asyncio.Semaphore(max_concurrency)
 
         async def _animate_with_sem(scene: ScriptScene) -> SceneAnimation:
-            if scene.scene_number == 1 and sample_scene_1 is not None:
-                logger.debug("Reusing pre-generated approved Scene 1 animation")
-                return sample_scene_1
-
-            scene_duration = (
-                default_duration
+            native_duration = (
+                (scene_durations.get(scene.scene_number) if scene_durations else None)
+                or default_duration
                 or scene.duration_seconds
                 or self.settings.default_scene_duration_seconds
             )
+
+            if scene.scene_number == 1 and sample_scene_1 is not None:
+                logger.debug(
+                    "Reusing pre-generated approved Scene 1 animation (native duration: %.2fs)",
+                    sample_scene_1.duration_seconds,
+                )
+                return sample_scene_1
+
             async with semaphore:
                 return await self.animate_scene(
                     topic=topic,
                     scene=scene,
                     style=style,
-                    duration_seconds=scene_duration,
+                    duration_seconds=native_duration,
                 )
 
         tasks = [_animate_with_sem(scene) for scene in script.scenes]
