@@ -49,6 +49,21 @@ class Settings(BaseSettings):
         alias="ANIMATOR_MODEL",
         description="Gemini model for visual animation styling and code generation",
     )
+    narration_planner_model: str = Field(
+        default="gemini-3.7-flash",
+        alias="NARRATION_PLANNER_MODEL",
+        description="Gemini model for audio direction and narration planning",
+    )
+    tts_model: str = Field(
+        default="gemini-3.1-flash-tts-preview",
+        alias="TTS_MODEL",
+        description="Gemini model for text-to-speech voice audio generation",
+    )
+    default_tts_voice: str = Field(
+        default="Zephyr",
+        alias="DEFAULT_TTS_VOICE",
+        description="Default voice name for Gemini speech generation",
+    )
     video_width: int = Field(
         default=1280,
         alias="VIDEO_WIDTH",
@@ -70,7 +85,7 @@ class Settings(BaseSettings):
         description="Maximum iterative research-evaluator refinement rounds",
     )
     default_video_duration_minutes: int = Field(
-        default=10,
+        default=5,
         alias="DEFAULT_VIDEO_DURATION_MINUTES",
         description="Default target video duration in minutes when unspecified",
     )
@@ -142,11 +157,17 @@ class Settings(BaseSettings):
         """Directory for saved scene HTML/SVG animation code files."""
         return self.storage_dir / "animations"
 
+    @property
+    def audio_dir(self) -> Path:
+        """Directory for synthesized voiceover narration audio files."""
+        return self.storage_dir / "audio"
+
     def ensure_directories(self) -> None:
         """Create necessary directories if they do not exist."""
         self.storage_dir.mkdir(parents=True, exist_ok=True)
         self.renders_dir.mkdir(parents=True, exist_ok=True)
         self.animations_dir.mkdir(parents=True, exist_ok=True)
+        self.audio_dir.mkdir(parents=True, exist_ok=True)
         if self.sqlite_db_path.parent:
             self.sqlite_db_path.parent.mkdir(parents=True, exist_ok=True)
 

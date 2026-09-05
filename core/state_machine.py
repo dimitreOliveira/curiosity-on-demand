@@ -45,7 +45,18 @@ class PipelineStateMachine:
         },
         WorkflowState.AWAITING_SCRIPT_APPROVAL: {
             WorkflowState.SCRIPTING,
+            WorkflowState.NARRATING,
             WorkflowState.STYLING,
+            WorkflowState.FAILED,
+        },
+        WorkflowState.NARRATING: {
+            WorkflowState.AWAITING_NARRATION_APPROVAL,
+            WorkflowState.FAILED,
+        },
+        WorkflowState.AWAITING_NARRATION_APPROVAL: {
+            WorkflowState.NARRATING,
+            WorkflowState.STYLING,
+            WorkflowState.ANIMATING,
             WorkflowState.FAILED,
         },
         WorkflowState.STYLING: {
@@ -54,6 +65,7 @@ class PipelineStateMachine:
         },
         WorkflowState.AWAITING_STYLE_APPROVAL: {
             WorkflowState.STYLING,
+            WorkflowState.NARRATING,
             WorkflowState.ANIMATING,
             WorkflowState.FAILED,
         },

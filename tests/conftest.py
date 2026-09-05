@@ -1,5 +1,7 @@
 """Pytest fixtures and configuration for unit and integration testing."""
 
+import wave
+
 import pytest
 import pytest_asyncio
 
@@ -8,9 +10,13 @@ from core.database import DatabaseManager
 from core.models import (
     AnimationStoryboard,
     AnimationStyle,
+    NarrationPlan,
+    NarrationStoryboard,
     ResearchReport,
     ResearchSection,
     SceneAnimation,
+    SceneAudio,
+    SceneNarrationPlan,
     Script,
     ScriptScene,
 )
@@ -52,6 +58,9 @@ def mock_settings(tmp_path):
         EVALUATOR_MODEL="gemini-3.7-flash",
         SCRIPT_MODEL="gemini-3.7-flash",
         ANIMATOR_MODEL="gemini-3.7-flash",
+        NARRATION_PLANNER_MODEL="gemini-3.7-flash",
+        TTS_MODEL="gemini-3.1-flash-tts-preview",
+        DEFAULT_TTS_VOICE="Zephyr",
         VIDEO_WIDTH=1280,
         VIDEO_HEIGHT=720,
         DEFAULT_SCENE_DURATION_SECONDS=10,
@@ -189,4 +198,106 @@ def sample_storyboard(sample_animation_style, sample_scene_animation):
         topic="How Quantum Computers Work",
         style=sample_animation_style,
         scenes=[sample_scene_animation, scene_2, scene_3],
+    )
+
+
+@pytest.fixture
+def sample_wav_file(tmp_path):
+    """Create a real minimal valid 1-second 24kHz mono 16-bit PCM WAV file."""
+    wav_path = tmp_path / "sample.wav"
+    num_frames = 24000  # 1 second
+    pcm_data = b"\x00\x00" * num_frames  # silence
+    with wave.open(str(wav_path), "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(24000)
+        wf.writeframes(pcm_data)
+    return wav_path
+
+
+@pytest.fixture
+def sample_narration_plan():
+    """Sample NarrationPlan for testing."""
+    return NarrationPlan(
+        voice_name="Zephyr",
+        audio_profile_name="Dr. Julian Vance",
+        audio_profile_role="Knowledgeable Science Explorer",
+        scene_environment="Quiet, intimate soundstage studio with slight warm room presence",
+        directors_notes="Dynamic, clear, articulate. Pacing slows on foundational terms and quickens on wondrous realizations.",
+        sample_context="Standing in front of a minimalist high-tech holographic display",
+        scenes=[
+            SceneNarrationPlan(
+                scene_number=1,
+                title="The Light Switch Dilemma",
+                original_narration="Imagine a light switch that is not just ON or OFF, but pointing in every direction simultaneously. Welcome to quantum physics.",
+                enhanced_narration="[whispers] Imagine a light switch that is not just ON or OFF, [pause] but pointing in every direction simultaneously. [excitedly] Welcome to quantum physics.",
+                tone="Intrigued and hushed whisper",
+                pace="Brisk delivery with punchy consonants",
+                scene_directors_notes="Begin with an intimate whisper hook, then swell with enthusiasm.",
+            ),
+            SceneNarrationPlan(
+                scene_number=2,
+                title="Superposition & Entanglement",
+                original_narration="In a classical computer, each bit is a binary 0 or 1. But a qubit can exist in a superposition of both.",
+                enhanced_narration="In a classical computer, each bit is a binary 0 or 1. [thoughtful] But a qubit... can exist in a superposition of both.",
+                tone="Thoughtful and contemplative",
+                pace="Slow and deliberate cadence with dramatic pause",
+                scene_directors_notes="Crisp contrast between binary limits and quantum versatility.",
+            ),
+            SceneNarrationPlan(
+                scene_number=3,
+                title="The Quantum Horizon",
+                original_narration="While quantum computers won't replace your laptop, they will unlock simulations once thought impossible.",
+                enhanced_narration="[amazed] While quantum computers won't replace your laptop, they will unlock simulations once thought impossible.",
+                tone="Awe-inspiring and forward-looking",
+                pace="Dynamic crescendo",
+                scene_directors_notes="Inspiring, forward-looking crescendo.",
+            ),
+        ],
+    )
+
+
+@pytest.fixture
+def sample_scene_audio(sample_wav_file):
+    """Sample SceneAudio for testing."""
+    return SceneAudio(
+        scene_number=1,
+        audio_path=str(sample_wav_file),
+        duration_seconds=1.0,
+        mime_type="audio/wav",
+        file_size_bytes=48044,
+    )
+
+
+@pytest.fixture
+def sample_narration_storyboard(sample_narration_plan, sample_wav_file):
+    """Sample NarrationStoryboard for testing."""
+    scene_1 = SceneAudio(
+        scene_number=1,
+        audio_path=str(sample_wav_file),
+        duration_seconds=1.0,
+        mime_type="audio/wav",
+        file_size_bytes=48044,
+    )
+    scene_2 = SceneAudio(
+        scene_number=2,
+        audio_path=str(sample_wav_file),
+        duration_seconds=1.0,
+        mime_type="audio/wav",
+        file_size_bytes=48044,
+    )
+    scene_3 = SceneAudio(
+        scene_number=3,
+        audio_path=str(sample_wav_file),
+        duration_seconds=1.0,
+        mime_type="audio/wav",
+        file_size_bytes=48044,
+    )
+    return NarrationStoryboard(
+        topic="How Quantum Computers Work",
+        plan=sample_narration_plan,
+        scenes_audio=[scene_1, scene_2, scene_3],
+        sample_audio_path=str(sample_wav_file),
+        full_audio_path=str(sample_wav_file),
+        total_duration_seconds=3.0,
     )

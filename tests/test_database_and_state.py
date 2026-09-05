@@ -11,10 +11,12 @@ async def test_database_crud_lifecycle(
     memory_db,
     sample_research_report,
     sample_script,
+    sample_narration_plan,
+    sample_narration_storyboard,
     sample_animation_style,
     sample_storyboard,
 ):
-    """Test full database lifecycle for creating and updating project state, research, and script."""
+    """Test full database lifecycle for creating and updating project state, research, script, narration, and animation."""
     # 1. Create project
     project = await memory_db.create_project(
         user_id=100, chat_id=200, topic="Origin of Language"
@@ -42,7 +44,27 @@ async def test_database_crud_lifecycle(
     assert updated_script is not None
     assert updated_script.script is not None
     assert updated_script.script.topic == sample_script.topic
-    # 5. Save animation style
+
+    # 5. Save narration plan
+    updated_np = await memory_db.save_narration_plan(
+        project.project_id,
+        sample_narration_plan,
+        sample_audio_path="/tmp/sample.wav",
+    )
+    assert updated_np is not None
+    assert updated_np.narration_plan is not None
+    assert updated_np.narration_plan.voice_name == "Zephyr"
+    assert updated_np.sample_audio_path == "/tmp/sample.wav"
+
+    # 6. Save narration storyboard
+    updated_ns = await memory_db.save_narration_storyboard(
+        project.project_id, sample_narration_storyboard
+    )
+    assert updated_ns is not None
+    assert updated_ns.narration_storyboard is not None
+    assert len(updated_ns.narration_storyboard.scenes_audio) == 3
+
+    # 7. Save animation style
     updated_style = await memory_db.save_style(
         project.project_id,
         sample_animation_style,
@@ -53,7 +75,7 @@ async def test_database_crud_lifecycle(
     assert updated_style.style.style_name == sample_animation_style.style_name
     assert updated_style.sample_frame_path == "/tmp/sample.png"
 
-    # 6. Save storyboard
+    # 8. Save storyboard
     updated_sb = await memory_db.save_storyboard(
         project.project_id,
         sample_storyboard,
@@ -67,7 +89,7 @@ async def test_database_crud_lifecycle(
 
 @pytest.mark.asyncio
 async def test_state_machine_valid_transitions(memory_db):
-    """Test valid sequential state transitions through the research, scripting, and animation pipeline."""
+    """Test valid sequential state transitions through research, scripting, narration, and animation."""
     sm = PipelineStateMachine(db=memory_db)
     project = await memory_db.create_project(
         user_id=1, chat_id=1, topic="Deep Sea Creatures"
@@ -105,7 +127,24 @@ async def test_state_machine_valid_transitions(memory_db):
     # SCRIPTING -> AWAITING_SCRIPT_APPROVAL
     await sm.transition(project.project_id, WorkflowState.AWAITING_SCRIPT_APPROVAL)
 
-    # AWAITING_SCRIPT_APPROVAL -> STYLING (Approval)
+    # AWAITING_SCRIPT_APPROVAL -> NARRATING (Approval for TTS)
+    p5_nar = await sm.transition(project.project_id, WorkflowState.NARRATING)
+    assert p5_nar.state == WorkflowState.NARRATING
+
+    # NARRATING -> AWAITING_NARRATION_APPROVAL
+    p5_nar_app = await sm.transition(
+        project.project_id, WorkflowState.AWAITING_NARRATION_APPROVAL
+    )
+    assert p5_nar_app.state == WorkflowState.AWAITING_NARRATION_APPROVAL
+
+    # AWAITING_NARRATION_APPROVAL -> NARRATING (Feedback loop)
+    p5_nar_fb = await sm.transition(project.project_id, WorkflowState.NARRATING)
+    assert p5_nar_fb.state == WorkflowState.NARRATING
+
+    # NARRATING -> AWAITING_NARRATION_APPROVAL
+    await sm.transition(project.project_id, WorkflowState.AWAITING_NARRATION_APPROVAL)
+
+    # AWAITING_NARRATION_APPROVAL -> STYLING (Approval)
     p5 = await sm.transition(project.project_id, WorkflowState.STYLING)
     assert p5.state == WorkflowState.STYLING
 

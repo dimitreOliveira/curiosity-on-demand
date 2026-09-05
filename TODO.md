@@ -7,6 +7,5 @@
 - [x] Visual direction & SVG/Canvas animation generator / frame renderer (`AnimationPlannerAgent`, `SceneAnimatorAgent`, `AnimationRenderer`)
 - [x] Human-in-the-loop animation style approval & feedback refinement loop via Telegram
 - [x] Video assembly and master MP4 generation
-- [ ] Narration synthesis via Gemini TTS
+- [x] Narration synthesis via Gemini TTS (`NarrationPlannerAgent`, `NarrationGeneratorAgent`, `NarratorAgent`)
 - [ ] YouTube publishing integration via YouTube Data API v3
-- [ ] User voice input support via audio transcription
