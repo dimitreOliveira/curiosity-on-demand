@@ -34,23 +34,36 @@ class AnimatorAgent(BaseAgent):
         previous_style: AnimationStyle | None = None,
     ) -> tuple[AnimationStyle, SceneAnimation]:
         """Formulate visual style via AnimationPlannerAgent and generate Scene 1 animation code."""
-        style = await self.planner.plan_style(
-            topic=topic,
-            script=script,
-            feedback=feedback,
-            previous_style=previous_style,
+        from core.cost_tracker import (
+            PipelineComponent,
+            current_project_id,
+            track_component,
         )
+
+        proj_id = current_project_id.get() or ""
+
+        with track_component(proj_id, PipelineComponent.STYLE_PLANNING):
+            style = await self.planner.plan_style(
+                topic=topic,
+                script=script,
+                feedback=feedback,
+                previous_style=previous_style,
+            )
+
         scene_1 = script.scenes[0] if script.scenes else None
         if not scene_1:
             raise RuntimeError(
                 "Cannot generate animation sample: script contains no scenes."
             )
-        scene_1_anim = await self.scene_animator.animate_scene(
-            topic=topic,
-            scene=scene_1,
-            style=style,
-            duration_seconds=scene_1.duration_seconds,
-        )
+
+        with track_component(proj_id, PipelineComponent.SCENE_ANIMATION):
+            scene_1_anim = await self.scene_animator.animate_scene(
+                topic=topic,
+                scene=scene_1,
+                style=style,
+                duration_seconds=scene_1.duration_seconds,
+            )
+
         return style, scene_1_anim
 
     async def generate_scene_animation(
@@ -61,12 +74,20 @@ class AnimatorAgent(BaseAgent):
         duration_seconds: int | None = None,
     ) -> SceneAnimation:
         """Generate standalone HTML/SVG/Canvas animation code for an individual scene."""
-        return await self.scene_animator.animate_scene(
-            topic=topic,
-            scene=scene,
-            style=style,
-            duration_seconds=duration_seconds,
+        from core.cost_tracker import (
+            PipelineComponent,
+            current_project_id,
+            track_component,
         )
+
+        proj_id = current_project_id.get() or ""
+        with track_component(proj_id, PipelineComponent.SCENE_ANIMATION):
+            return await self.scene_animator.animate_scene(
+                topic=topic,
+                scene=scene,
+                style=style,
+                duration_seconds=duration_seconds,
+            )
 
     async def generate_full_storyboard(
         self,
@@ -77,13 +98,21 @@ class AnimatorAgent(BaseAgent):
         default_duration: int | None = None,
     ) -> AnimationStoryboard:
         """Generate animations for all scenes using SceneAnimatorAgent in parallel."""
-        return await self.scene_animator.animate_storyboard(
-            topic=topic,
-            script=script,
-            style=style,
-            sample_scene_1=sample_scene_1,
-            default_duration=default_duration,
+        from core.cost_tracker import (
+            PipelineComponent,
+            current_project_id,
+            track_component,
         )
+
+        proj_id = current_project_id.get() or ""
+        with track_component(proj_id, PipelineComponent.SCENE_ANIMATION):
+            return await self.scene_animator.animate_storyboard(
+                topic=topic,
+                script=script,
+                style=style,
+                sample_scene_1=sample_scene_1,
+                default_duration=default_duration,
+            )
 
 
 __all__ = [

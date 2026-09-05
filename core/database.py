@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime
 
-from sqlalchemy import BigInteger, DateTime, String, Text, select, text
+from sqlalchemy import BigInteger, DateTime, Float, Integer, String, Text, select, text
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -15,9 +15,11 @@ from config.settings import get_settings
 from core.models import (
     AnimationStoryboard,
     AnimationStyle,
+    ComponentUsage,
     NarrationPlan,
     NarrationStoryboard,
     ProjectSession,
+    ProjectUsageSummary,
     ResearchReport,
     Script,
     WorkflowState,
@@ -133,6 +135,28 @@ class ProjectRecord(Base):
         )
 
 
+class ProjectUsageRecord(Base):
+    """SQLAlchemy model for persisting granular API usage, token counts, and cost logs."""
+
+    __tablename__ = "project_usage_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    project_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    component: Mapped[str] = mapped_column(String(64), nullable=False)
+    model_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    prompt_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    output_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    total_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    grounding_queries: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    audio_duration_seconds: Mapped[float] = mapped_column(
+        Float, default=0.0, nullable=False
+    )
+    cost_usd: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=lambda: datetime.now(UTC), nullable=False
+    )
+
+
 class DatabaseManager:
     """Manages database connection and session operations."""
 
@@ -146,6 +170,10 @@ class DatabaseManager:
         self.session_factory: async_sessionmaker[AsyncSession] = async_sessionmaker(
             bind=self.engine, expire_on_commit=False, class_=AsyncSession
         )
+
+        from core.cost_tracker import get_cost_tracker
+
+        get_cost_tracker().db = self
 
     async def init_db(self) -> None:
         """Create database tables if they don't exist and apply column migrations."""
@@ -383,6 +411,94 @@ class DatabaseManager:
             record.updated_at = datetime.now(UTC)
             await session.commit()
             return record.to_session()
+
+    async def record_usage(
+        self,
+        project_id: str,
+        component: str,
+        model_name: str,
+        prompt_tokens: int = 0,
+        output_tokens: int = 0,
+        grounding_queries: int = 0,
+        audio_duration_seconds: float = 0.0,
+        cost_usd: float = 0.0,
+    ) -> ProjectUsageRecord:
+        """Record an API usage event in the database."""
+        async with self.session_factory() as session:
+            record = ProjectUsageRecord(
+                project_id=project_id,
+                component=component,
+                model_name=model_name,
+                prompt_tokens=prompt_tokens,
+                output_tokens=output_tokens,
+                total_tokens=prompt_tokens + output_tokens,
+                grounding_queries=grounding_queries,
+                audio_duration_seconds=audio_duration_seconds,
+                cost_usd=cost_usd,
+            )
+            session.add(record)
+            await session.commit()
+            await session.refresh(record)
+            return record
+
+    async def get_project_usage(self, project_id: str) -> list[ProjectUsageRecord]:
+        """Retrieve all usage logs for a specific project."""
+        async with self.session_factory() as session:
+            stmt = (
+                select(ProjectUsageRecord)
+                .where(ProjectUsageRecord.project_id == project_id)
+                .order_by(ProjectUsageRecord.id.asc())
+            )
+            result = await session.execute(stmt)
+            return list(result.scalars().all())
+
+    async def get_project_usage_summary(self, project_id: str) -> ProjectUsageSummary:
+        """Aggregate usage records for a project into a ProjectUsageSummary."""
+        records = await self.get_project_usage(project_id)
+        components_map: dict[str, ComponentUsage] = {}
+
+        for rec in records:
+            if rec.component not in components_map:
+                components_map[rec.component] = ComponentUsage(
+                    component=rec.component,
+                    model_name=rec.model_name,
+                    prompt_tokens=0,
+                    output_tokens=0,
+                    total_tokens=0,
+                    grounding_queries=0,
+                    audio_duration_seconds=0.0,
+                    estimated_cost_usd=0.0,
+                    call_count=0,
+                )
+            c = components_map[rec.component]
+            c.prompt_tokens += rec.prompt_tokens
+            c.output_tokens += rec.output_tokens
+            c.total_tokens += rec.total_tokens
+            c.grounding_queries += rec.grounding_queries
+            c.audio_duration_seconds += rec.audio_duration_seconds
+            c.estimated_cost_usd += rec.cost_usd
+            c.call_count += 1
+
+        components_list = list(components_map.values())
+        total_cost = sum(c.estimated_cost_usd for c in components_list)
+        total_prompt = sum(c.prompt_tokens for c in components_list)
+        total_output = sum(c.output_tokens for c in components_list)
+        total_tokens = total_prompt + total_output
+        total_queries = sum(c.grounding_queries for c in components_list)
+        total_audio = sum(c.audio_duration_seconds for c in components_list)
+        total_calls = sum(c.call_count for c in components_list)
+
+        return ProjectUsageSummary(
+            project_id=project_id,
+            total_cost_usd=round(total_cost, 4),
+            total_prompt_tokens=total_prompt,
+            total_output_tokens=total_output,
+            total_tokens=total_tokens,
+            total_grounding_queries=total_queries,
+            total_audio_duration_seconds=round(total_audio, 1),
+            total_calls=total_calls,
+            components=components_list,
+        )
 
 
 _db_manager: DatabaseManager | None = None

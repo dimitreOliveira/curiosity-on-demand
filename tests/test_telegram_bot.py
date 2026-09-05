@@ -519,8 +519,17 @@ async def test_telegram_bot_run_full_animation_pipeline(
     assert bot_service.renderer.render_scene_video.call_count == len(
         sample_storyboard.scenes
     )
-    assert bot_service.renderer.assemble_video.call_count == 1
     assert mock_app.bot.send_video.call_count == 1
+    caption_sent = mock_app.bot.send_video.call_args[1]["caption"]
+    assert "Est. Cost:" in caption_sent
+    assert mock_app.bot.send_message.call_count >= 1
+    # Check that a breakdown message was sent
+    breakdown_calls = [
+        call
+        for call in mock_app.bot.send_message.call_args_list
+        if "Resource & Cost Breakdown" in call[1].get("text", "")
+    ]
+    assert len(breakdown_calls) == 1
 
 
 @pytest.mark.asyncio

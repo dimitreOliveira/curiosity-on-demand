@@ -85,7 +85,7 @@ Curiosity On Demand is an automated educational video research, scripting, narra
                                             |                                                                                         |
                                             v                                                                                         |
                                    [ State: COMPLETED ] ------------------------------------------------------------------------------+
-                                                          (Sends final master MP4 video with voiceover to user in Telegram)
+                                                          (Sends final master MP4 video, cost badge, & detailed resource breakdown to Telegram)
 ```
 
 ---
@@ -96,6 +96,7 @@ Curiosity On Demand is an automated educational video research, scripting, narra
 - **AI & LLM Grounding:** Google GenAI SDK (`google-genai` 2.0+) using `gemini-3.7-flash` with native Google Search tool and structured JSON schemas
 - **Voiceover Speech Generation:** Gemini TTS (`gemini-3.1-flash-tts-preview`) with natural-language directorial prompts and inline emotional audio tags
 - **Animation & Rendering:** Playwright (Headless Chromium for SVG + HTML5 Canvas execution) and `imageio-ffmpeg` for MP4 video assembly and audio multiplexing
+- **Cost & Token Tracking:** Granular per-component usage logging (input/output tokens, search grounding queries, TTS audio duration, and estimated USD cost) with automatic Telegram breakdown reports
 - **Data Validation & Settings:** `pydantic` v2, `pydantic-settings`
 - **Persistence & State:** SQLAlchemy 2.0 async + SQLite (`aiosqlite`)
 - **Bot Framework:** `python-telegram-bot` (v22+ async)
