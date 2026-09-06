@@ -23,6 +23,7 @@ from core.models import (
     ResearchReport,
     Script,
     WorkflowState,
+    compute_project_folder,
 )
 
 
@@ -36,6 +37,7 @@ class ProjectRecord(Base):
     __tablename__ = "projects"
 
     project_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    project_folder: Mapped[str | None] = mapped_column(String(256), nullable=True)
     user_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
     chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
     topic: Mapped[str] = mapped_column(Text, nullable=False)
@@ -109,8 +111,13 @@ class ProjectRecord(Base):
             else None
         )
 
+        project_folder = self.project_folder or compute_project_folder(
+            self.topic, self.created_at
+        )
+
         return ProjectSession(
             project_id=self.project_id,
+            project_folder=project_folder,
             user_id=self.user_id,
             chat_id=self.chat_id,
             topic=self.topic,
@@ -230,6 +237,12 @@ class DatabaseManager:
                             "ALTER TABLE projects ADD COLUMN final_video_path VARCHAR(256)"
                         )
                     )
+                if "project_folder" not in columns:
+                    await conn.execute(
+                        text(
+                            "ALTER TABLE projects ADD COLUMN project_folder VARCHAR(256)"
+                        )
+                    )
 
     async def create_project(
         self, user_id: int, chat_id: int, topic: str
@@ -243,6 +256,7 @@ class DatabaseManager:
         )
         record = ProjectRecord(
             project_id=session_obj.project_id,
+            project_folder=session_obj.project_folder,
             user_id=user_id,
             chat_id=chat_id,
             topic=topic,

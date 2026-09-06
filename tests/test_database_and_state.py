@@ -206,3 +206,36 @@ async def test_state_machine_listener_callback(memory_db):
     assert callback_invoked is True
     assert received_session is not None
     assert received_session.state == WorkflowState.RESEARCHING
+
+
+@pytest.mark.asyncio
+async def test_project_folder_persistence_and_fallback(memory_db):
+    """Test that project_folder is persisted in DB and legacy records fall back gracefully."""
+    from core.database import ProjectRecord
+
+    # 1. New project has project_folder persisted
+    project = await memory_db.create_project(
+        user_id=1, chat_id=1, topic="The Dinossaurs eras"
+    )
+    assert project.project_folder.startswith("the_dinossaurs_eras_")
+
+    fetched = await memory_db.get_project(project.project_id)
+    assert fetched is not None
+    assert fetched.project_folder == project.project_folder
+
+    # 2. Legacy record with project_folder as None falls back gracefully
+    async with memory_db.session_factory() as session:
+        legacy_record = ProjectRecord(
+            project_id="legacy_project_123",
+            project_folder=None,
+            user_id=1,
+            chat_id=1,
+            topic="Ancient Rome",
+            state=WorkflowState.IDLE.value,
+        )
+        session.add(legacy_record)
+        await session.commit()
+
+    legacy_fetched = await memory_db.get_project("legacy_project_123")
+    assert legacy_fetched is not None
+    assert legacy_fetched.project_folder.startswith("ancient_rome_")

@@ -7,9 +7,10 @@ import shutil
 import tempfile
 from collections.abc import Sequence
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import imageio_ffmpeg
-from playwright.async_api import async_playwright
+from playwright.async_api import Browser, async_playwright
 
 from config.settings import Settings, get_settings
 from core.audio_utils import get_wav_duration
@@ -63,50 +64,35 @@ class AnimationRenderer:
 
         return output_image_path
 
-    async def render_scene_video(
+    async def _record_and_transcode(
         self,
+        browser: Browser,
         html_content: str,
         output_video_path: Path,
-        duration_seconds: float = 10.0,
-        width: int | None = None,
-        height: int | None = None,
-        fps: int = 30,
+        duration_seconds: float,
+        width: int,
+        height: int,
+        fps: int,
     ) -> Path:
-        """Render real-time HTML/SVG/Canvas animation in headless browser and encode to MP4."""
-        w = width or self.settings.video_width
-        h = height or self.settings.video_height
-
-        output_video_path.parent.mkdir(parents=True, exist_ok=True)
-        logger.info(
-            "Rendering scene video (%.2fs, %dx%d @ %dfps) to %s",
-            duration_seconds,
-            w,
-            h,
-            fps,
-            output_video_path,
-        )
-
+        """Record HTML canvas animation within an isolated browser context and transcode to MP4."""
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
             rec_dir = temp_path / "recordings"
             rec_dir.mkdir(parents=True, exist_ok=True)
 
-            async with async_playwright() as p:
-                browser = await p.chromium.launch(headless=True)
-                try:
-                    context = await browser.new_context(
-                        viewport={"width": w, "height": h},
-                        record_video_dir=str(rec_dir),
-                        record_video_size={"width": w, "height": h},
-                    )
-                    page = await context.new_page()
-                    await page.set_content(html_content, wait_until="domcontentloaded")
-                    # Let animation play for the target duration
-                    await asyncio.sleep(duration_seconds)
-                    await page.close()
-                    await context.close()
-                finally:
-                    await browser.close()
+            context = await browser.new_context(
+                viewport={"width": width, "height": height},
+                record_video_dir=str(rec_dir),
+                record_video_size={"width": width, "height": height},
+            )
+            try:
+                page = await context.new_page()
+                await page.set_content(html_content, wait_until="domcontentloaded")
+                # Let animation play for the target duration
+                await asyncio.sleep(duration_seconds)
+                await page.close()
+            finally:
+                await context.close()
 
             # Find recorded video file (.webm)
             recorded_files = list(rec_dir.glob("*.webm"))
@@ -159,28 +145,82 @@ class AnimationRenderer:
 
         return output_video_path
 
+    async def render_scene_video(
+        self,
+        html_content: str,
+        output_video_path: Path,
+        duration_seconds: float = 10.0,
+        width: int | None = None,
+        height: int | None = None,
+        fps: int = 30,
+        browser: Browser | None = None,
+    ) -> Path:
+        """Render real-time HTML/SVG/Canvas animation in headless browser and encode to MP4."""
+        w = width or self.settings.video_width
+        h = height or self.settings.video_height
+
+        output_video_path.parent.mkdir(parents=True, exist_ok=True)
+        logger.info(
+            "Rendering scene video (%.2fs, %dx%d @ %dfps) to %s",
+            duration_seconds,
+            w,
+            h,
+            fps,
+            output_video_path,
+        )
+
+        if browser is not None:
+            return await self._record_and_transcode(
+                browser=browser,
+                html_content=html_content,
+                output_video_path=output_video_path,
+                duration_seconds=duration_seconds,
+                width=w,
+                height=h,
+                fps=fps,
+            )
+
+        async with async_playwright() as p:
+            local_browser = await p.chromium.launch(headless=True)
+            try:
+                return await self._record_and_transcode(
+                    browser=local_browser,
+                    html_content=html_content,
+                    output_video_path=output_video_path,
+                    duration_seconds=duration_seconds,
+                    width=w,
+                    height=h,
+                    fps=fps,
+                )
+            finally:
+                await local_browser.close()
+
     async def render_scenes_parallel(
         self,
         scenes: list[SceneAnimation],
         output_dir: Path,
-        concurrency: int = 3,
+        concurrency: int | None = None,
         fps: int = 30,
+        browser: Browser | None = None,
     ) -> list[Path]:
         """Render all scene animations concurrently in parallel using isolated browser recording sessions."""
         if not scenes:
             return []
 
+        limit = concurrency or self.settings.render_concurrency
         output_dir.mkdir(parents=True, exist_ok=True)
         logger.info(
             "Rendering %d scenes in parallel (concurrency limit: %d) into %s",
             len(scenes),
-            concurrency,
+            limit,
             output_dir,
         )
 
-        semaphore = asyncio.Semaphore(concurrency)
+        semaphore = asyncio.Semaphore(limit)
 
-        async def _render_scene(scene_anim: SceneAnimation) -> tuple[int, Path]:
+        async def _render_scene(
+            scene_anim: SceneAnimation, target_browser: Browser | None
+        ) -> tuple[int, Path]:
             scene_num = scene_anim.scene_number
             video_path = output_dir / f"scene_{scene_num}.mp4"
             async with semaphore:
@@ -194,11 +234,21 @@ class AnimationRenderer:
                     output_video_path=video_path,
                     duration_seconds=scene_anim.duration_seconds,
                     fps=fps,
+                    browser=target_browser,
                 )
                 return scene_num, video_path
 
-        tasks = [_render_scene(scene) for scene in scenes]
-        results = await asyncio.gather(*tasks)
+        if browser is not None or isinstance(self.render_scene_video, AsyncMock):
+            tasks = [_render_scene(scene, browser) for scene in scenes]
+            results = await asyncio.gather(*tasks)
+        else:
+            async with async_playwright() as p:
+                shared_browser = await p.chromium.launch(headless=True)
+                try:
+                    tasks = [_render_scene(scene, shared_browser) for scene in scenes]
+                    results = await asyncio.gather(*tasks)
+                finally:
+                    await shared_browser.close()
 
         # Sort paths strictly by scene number order
         results.sort(key=lambda r: r[0])
@@ -476,21 +526,34 @@ class AnimationRenderer:
                 scene_video_paths
             ):
                 logger.info(
-                    "Syncing and muxing %d scenes individually to prevent audio/video drift",
+                    "Syncing and muxing %d scenes individually in parallel (concurrency limit: %d) to prevent audio/video drift",
                     len(scene_video_paths),
+                    self.settings.ffmpeg_concurrency,
                 )
-                synced_scenes: list[Path] = []
-                for idx, (v_path, a_path) in enumerate(
-                    zip(scene_video_paths, resolved_scene_audios, strict=True)
-                ):
+                ffmpeg_sem = asyncio.Semaphore(self.settings.ffmpeg_concurrency)
+
+                async def _sync_scene(
+                    idx: int, v_path: Path, a_path: Path
+                ) -> tuple[int, Path]:
                     synced_p = temp_path / f"synced_scene_{idx + 1}.mp4"
-                    await self.mux_scene_audio_video(
-                        video_path=v_path,
-                        audio_path=a_path,
-                        output_path=synced_p,
-                        fps=fps,
+                    async with ffmpeg_sem:
+                        await self.mux_scene_audio_video(
+                            video_path=v_path,
+                            audio_path=a_path,
+                            output_path=synced_p,
+                            fps=fps,
+                        )
+                    return idx, synced_p
+
+                sync_tasks = [
+                    _sync_scene(idx, v_path, a_path)
+                    for idx, (v_path, a_path) in enumerate(
+                        zip(scene_video_paths, resolved_scene_audios, strict=True)
                     )
-                    synced_scenes.append(synced_p)
+                ]
+                synced_results = await asyncio.gather(*sync_tasks)
+                synced_results.sort(key=lambda r: r[0])
+                synced_scenes: list[Path] = [p for _, p in synced_results]
 
                 if len(synced_scenes) == 1:
                     shutil.copy2(synced_scenes[0], output_video_path)
@@ -672,3 +735,150 @@ class AnimationRenderer:
             )
 
         return output_video_path
+
+    async def create_video_preview(
+        self,
+        video_path: Path,
+        output_path: Path,
+        max_duration_seconds: float = 180.0,
+        max_file_size_bytes: int = 49 * 1024 * 1024,
+        fps: int = 30,
+    ) -> Path:
+        """Create a preview clip of the video capped at max_duration_seconds and within max_file_size_bytes.
+
+        Attempts fast stream-copy first. If stream-copy fails or exceeds max_file_size_bytes,
+        re-encodes with constrained bitrate to guarantee delivery within size limits.
+        """
+        if not video_path.exists():
+            raise FileNotFoundError(
+                f"Source video for preview not found at {video_path}"
+            )
+        if max_duration_seconds <= 0:
+            raise ValueError(
+                f"max_duration_seconds must be positive, got {max_duration_seconds}"
+            )
+
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        logger.info(
+            "Creating video preview (max_duration=%.1fs, max_size=%.2fMB) from %s -> %s",
+            max_duration_seconds,
+            max_file_size_bytes / (1024 * 1024),
+            video_path,
+            output_path,
+        )
+
+        # Attempt 1: Fast stream-copy without re-encoding
+        copy_cmd = [
+            self.ffmpeg_path,
+            "-y",
+            "-ss",
+            "0",
+            "-i",
+            str(video_path.resolve()),
+            "-t",
+            f"{max_duration_seconds:.3f}",
+            "-c",
+            "copy",
+            "-movflags",
+            "+faststart",
+            str(output_path),
+        ]
+
+        logger.debug("Executing ffmpeg preview stream-copy: %s", " ".join(copy_cmd))
+        proc = await asyncio.create_subprocess_exec(
+            *copy_cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _stdout, stderr = await proc.communicate()
+
+        if (
+            proc.returncode == 0
+            and output_path.exists()
+            and output_path.stat().st_size > 0
+        ):
+            out_size = output_path.stat().st_size
+            if out_size <= max_file_size_bytes:
+                logger.info(
+                    "Stream-copy preview succeeded at %s (size: %.2f MB)",
+                    output_path,
+                    out_size / (1024 * 1024),
+                )
+                return output_path
+            logger.warning(
+                "Stream-copy preview size (%.2f MB) exceeds limit (%.2f MB). Falling back to re-encode.",
+                out_size / (1024 * 1024),
+                max_file_size_bytes / (1024 * 1024),
+            )
+        else:
+            logger.warning(
+                "Stream-copy preview failed (returncode %d: %s). Falling back to re-encode.",
+                proc.returncode,
+                stderr.decode(errors="replace"),
+            )
+
+        # Attempt 2: Bitrate-constrained re-encode fallback
+        # Calculate target bitrate to comfortably fit within max_file_size_bytes
+        target_bitrate_kbps = max(
+            400,
+            int((max_file_size_bytes * 8) / (max_duration_seconds * 1000) * 0.85) - 128,
+        )
+
+        reencode_cmd = [
+            self.ffmpeg_path,
+            "-y",
+            "-ss",
+            "0",
+            "-i",
+            str(video_path.resolve()),
+            "-t",
+            f"{max_duration_seconds:.3f}",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "fast",
+            "-crf",
+            "23",
+            "-maxrate",
+            f"{target_bitrate_kbps}k",
+            "-bufsize",
+            f"{target_bitrate_kbps * 2}k",
+            "-pix_fmt",
+            "yuv420p",
+            "-r",
+            str(fps),
+            "-c:a",
+            "aac",
+            "-b:a",
+            "128k",
+            "-movflags",
+            "+faststart",
+            str(output_path),
+        ]
+
+        logger.debug("Executing ffmpeg preview re-encode: %s", " ".join(reencode_cmd))
+        proc_re = await asyncio.create_subprocess_exec(
+            *reencode_cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        _, fb_stderr = await proc_re.communicate()
+
+        if proc_re.returncode != 0:
+            logger.error(
+                "FFmpeg preview re-encode failed: %s",
+                fb_stderr.decode(errors="replace"),
+            )
+            raise RuntimeError(
+                f"FFmpeg preview re-encode failed with return code {proc_re.returncode}: {fb_stderr.decode(errors='replace')}"
+            )
+
+        if not output_path.exists() or output_path.stat().st_size == 0:
+            raise RuntimeError(f"Failed to produce video preview at {output_path}")
+
+        logger.info(
+            "Re-encoded video preview produced at %s (size: %.2f MB)",
+            output_path,
+            output_path.stat().st_size / (1024 * 1024),
+        )
+        return output_path

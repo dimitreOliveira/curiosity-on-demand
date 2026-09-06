@@ -320,3 +320,184 @@ async def test_renderer_assemble_video_per_scene_sync(mock_settings, tmp_path):
         assert res == output_mp4
         assert output_mp4.exists()
         assert renderer.mux_scene_audio_video.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_renderer_create_video_preview_stream_copy_success(
+    mock_settings, tmp_path
+):
+    """Test create_video_preview executing fast stream-copy successfully within size limits."""
+    renderer = AnimationRenderer(settings=mock_settings)
+    source_mp4 = tmp_path / "full_video.mp4"
+    source_mp4.write_bytes(b"FullVideoContent")
+    preview_mp4 = tmp_path / "preview.mp4"
+
+    mock_proc = AsyncMock()
+    mock_proc.returncode = 0
+    mock_proc.communicate.return_value = (b"", b"")
+
+    async def mock_ffmpeg(*cmd, **kwargs):
+        # Write 10KB dummy preview file
+        preview_mp4.write_bytes(b"A" * 10240)
+        return mock_proc
+
+    with patch("asyncio.create_subprocess_exec", side_effect=mock_ffmpeg) as mock_exec:
+        result = await renderer.create_video_preview(
+            video_path=source_mp4,
+            output_path=preview_mp4,
+            max_duration_seconds=180.0,
+            max_file_size_bytes=50 * 1024 * 1024,
+        )
+        assert result == preview_mp4
+        assert preview_mp4.exists()
+        assert mock_exec.call_count == 1
+        # Assert -c copy was used in the first call
+        first_cmd = mock_exec.call_args_list[0][0]
+        assert "copy" in first_cmd
+
+
+@pytest.mark.asyncio
+async def test_renderer_create_video_preview_fallback_on_large_size(
+    mock_settings, tmp_path
+):
+    """Test create_video_preview falling back to re-encode when stream-copy exceeds size limit."""
+    renderer = AnimationRenderer(settings=mock_settings)
+    source_mp4 = tmp_path / "full_video.mp4"
+    source_mp4.write_bytes(b"FullVideoContent")
+    preview_mp4 = tmp_path / "preview.mp4"
+
+    mock_proc = AsyncMock()
+    mock_proc.returncode = 0
+    mock_proc.communicate.return_value = (b"", b"")
+
+    call_count = 0
+
+    async def mock_ffmpeg(*cmd, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            # First call (stream-copy): produce file that exceeds max size (2000 bytes > 1000 bytes)
+            preview_mp4.write_bytes(b"B" * 2000)
+        else:
+            # Second call (re-encode): produce compressed file (500 bytes <= 1000 bytes)
+            preview_mp4.write_bytes(b"C" * 500)
+        return mock_proc
+
+    with patch("asyncio.create_subprocess_exec", side_effect=mock_ffmpeg) as mock_exec:
+        result = await renderer.create_video_preview(
+            video_path=source_mp4,
+            output_path=preview_mp4,
+            max_duration_seconds=180.0,
+            max_file_size_bytes=1000,
+        )
+        assert result == preview_mp4
+        assert preview_mp4.stat().st_size == 500
+        # Should have executed stream-copy first, then fallback re-encode
+        assert mock_exec.call_count == 2
+        second_cmd = mock_exec.call_args_list[1][0]
+        assert "libx264" in second_cmd
+
+
+@pytest.mark.asyncio
+async def test_renderer_create_video_preview_validation(mock_settings, tmp_path):
+    """Test create_video_preview parameter validations."""
+    renderer = AnimationRenderer(settings=mock_settings)
+    non_existent = tmp_path / "missing.mp4"
+    out_path = tmp_path / "preview.mp4"
+
+    with pytest.raises(FileNotFoundError, match="Source video for preview not found"):
+        await renderer.create_video_preview(non_existent, out_path)
+
+    existing = tmp_path / "exists.mp4"
+    existing.write_bytes(b"content")
+
+    with pytest.raises(ValueError, match="max_duration_seconds must be positive"):
+        await renderer.create_video_preview(
+            existing, out_path, max_duration_seconds=0.0
+        )
+
+
+@pytest.mark.asyncio
+async def test_renderer_render_scenes_parallel_shared_browser(
+    mock_settings, tmp_path, sample_scene_animation
+):
+    """Test render_scenes_parallel launches Chromium once and shares it across scenes."""
+    renderer = AnimationRenderer(settings=mock_settings)
+    out_dir = tmp_path / "scenes_shared_browser"
+
+    scene_2 = sample_scene_animation.model_copy(deep=True)
+    scene_2.scene_number = 2
+    scene_2.title = "Scene Two"
+
+    mock_browser = AsyncMock()
+    mock_playwright = AsyncMock()
+    mock_playwright.chromium.launch.return_value = mock_browser
+
+    async def mock_record(browser, html_content, output_video_path, **kwargs):
+        assert browser is mock_browser
+        output_video_path.parent.mkdir(parents=True, exist_ok=True)
+        output_video_path.write_bytes(f"Rendered_{output_video_path.name}".encode())
+        return output_video_path
+
+    renderer._record_and_transcode = AsyncMock(side_effect=mock_record)
+
+    with patch("services.renderer.async_playwright") as mock_ap:
+        mock_cm = AsyncMock()
+        mock_cm.__aenter__.return_value = mock_playwright
+        mock_cm.__aexit__.return_value = None
+        mock_ap.return_value = mock_cm
+
+        paths = await renderer.render_scenes_parallel(
+            scenes=[sample_scene_animation, scene_2],
+            output_dir=out_dir,
+            concurrency=2,
+        )
+
+        assert len(paths) == 2
+        # Verify Chromium was launched once and closed once
+        mock_playwright.chromium.launch.assert_called_once_with(headless=True)
+        mock_browser.close.assert_called_once()
+        assert renderer._record_and_transcode.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_renderer_assemble_video_parallel_muxing(mock_settings, tmp_path):
+    """Test assemble_video concurrently muxes all scenes and preserves scene ordering."""
+    renderer = AnimationRenderer(settings=mock_settings)
+
+    scenes = []
+    audios = []
+    for i in range(1, 4):
+        v = tmp_path / f"scene_{i}.mp4"
+        v.write_bytes(f"FakeScene{i}".encode())
+        a = tmp_path / f"audio_{i}.wav"
+        a.write_bytes(f"FakeAudio{i}".encode())
+        scenes.append(v)
+        audios.append(a)
+
+    out_mp4 = tmp_path / "final_parallel.mp4"
+
+    async def mock_mux(video_path, audio_path, output_path, **kwargs):
+        output_path.write_bytes(f"Synced_{video_path.name}_{audio_path.name}".encode())
+        return output_path
+
+    renderer.mux_scene_audio_video = AsyncMock(side_effect=mock_mux)
+
+    mock_proc = AsyncMock()
+    mock_proc.returncode = 0
+    mock_proc.communicate.return_value = (b"", b"")
+
+    async def mock_concat(*args, **kwargs):
+        out_mp4.write_bytes(b"ConcatenatedMaster")
+        return mock_proc
+
+    with patch("asyncio.create_subprocess_exec", side_effect=mock_concat):
+        result = await renderer.assemble_video(
+            scene_video_paths=scenes,
+            output_video_path=out_mp4,
+            scene_audio_paths=audios,
+        )
+
+        assert result == out_mp4
+        assert out_mp4.exists()
+        assert renderer.mux_scene_audio_video.call_count == 3

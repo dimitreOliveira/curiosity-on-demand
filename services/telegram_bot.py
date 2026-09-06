@@ -24,7 +24,7 @@ from agents.researcher import ResearcherAgent
 from agents.scene_animator import SceneAnimatorAgent
 from agents.script_writer import ScriptWriterAgent
 from config.settings import Settings, get_settings
-from core.audio_utils import get_wav_duration
+from core.audio_utils import format_duration, get_wav_duration
 from core.cost_tracker import (
     PipelineComponent,
     get_cost_tracker,
@@ -32,6 +32,7 @@ from core.cost_tracker import (
 )
 from core.database import DatabaseManager, get_db_manager
 from core.models import (
+    AnimationStoryboard,
     AnimationStyle,
     NarrationPlan,
     NarrationStoryboard,
@@ -49,9 +50,24 @@ logger = logging.getLogger(__name__)
 
 def extract_target_duration(text: str, default_minutes: int = 10) -> str:
     """Extract requested video duration from topic string, or default to configured duration."""
-    match = re.search(r"\b(\d+)\s*(?:min|minute|minutes|m)\b", text, re.IGNORECASE)
-    if match:
-        return f"{match.group(1)} minutes"
+    # Match minutes e.g. "5 min", "3-minute", "15 minutes", "2m", "3-min"
+    min_match = re.search(
+        r"\b(\d+(?:\.\d+)?)[-\s]*(?:minutes?|mins?|m)\b", text, re.IGNORECASE
+    )
+    if min_match:
+        val = min_match.group(1)
+        val_str = str(int(float(val))) if float(val).is_integer() else str(float(val))
+        return f"{val_str} minutes"
+
+    # Match seconds e.g. "30s", "45 seconds", "90 sec", "45-second"
+    sec_match = re.search(
+        r"\b(\d+(?:\.\d+)?)[-\s]*(?:seconds?|secs?|s)\b", text, re.IGNORECASE
+    )
+    if sec_match:
+        val = sec_match.group(1)
+        val_str = str(int(float(val))) if float(val).is_integer() else str(float(val))
+        return f"{val_str} seconds"
+
     return f"~{default_minutes} minutes"
 
 
@@ -690,7 +706,8 @@ class TelegramBotService:
 
             await self.state_machine.transition(project_id, WorkflowState.NARRATING)
 
-            audio_dir = self.settings.audio_dir / project_id
+            project_folder = session.project_folder or project_id
+            audio_dir = self.settings.audio_dir / project_folder
             audio_dir.mkdir(parents=True, exist_ok=True)
 
             with track_component(project_id, PipelineComponent.NARRATION_PLANNING):
@@ -854,13 +871,14 @@ class TelegramBotService:
                 )
 
             # Persist Scene 1 HTML code
-            anim_dir = self.settings.animations_dir / project_id
+            project_folder = session.project_folder or project_id
+            anim_dir = self.settings.animations_dir / project_folder
             anim_dir.mkdir(parents=True, exist_ok=True)
             scene_1_html_path = anim_dir / "scene_1.html"
             scene_1_html_path.write_text(scene_1_anim.html_content, encoding="utf-8")
 
             # Render Scene 1 sample frame image snapshot (PNG)
-            render_dir = self.settings.renders_dir / project_id
+            render_dir = self.settings.renders_dir / project_folder
             render_dir.mkdir(parents=True, exist_ok=True)
             sample_frame_path = render_dir / "scene_1_sample.png"
 
@@ -983,9 +1001,10 @@ class TelegramBotService:
                     parse_mode=ParseMode.MARKDOWN,
                 )
 
-            anim_dir = self.settings.animations_dir / project_id
+            project_folder = session.project_folder or project_id
+            anim_dir = self.settings.animations_dir / project_folder
             anim_dir.mkdir(parents=True, exist_ok=True)
-            render_dir = self.settings.renders_dir / project_id
+            render_dir = self.settings.renders_dir / project_folder
             render_dir.mkdir(parents=True, exist_ok=True)
 
             # Check if Scene 1 was already generated during the styling approval stage
@@ -1012,44 +1031,57 @@ class TelegramBotService:
                     duration_seconds=s1_duration,
                 )
 
-            # Synthesize all scene voiceovers if narration plan exists
-            narration_storyboard: NarrationStoryboard | None = None
-            if session.narration_plan:
-                audio_dir = self.settings.audio_dir / project_id
+            script: Script = session.script
+            style: AnimationStyle = session.style
+            topic: str = session.topic
+            narration_plan: NarrationPlan | None = session.narration_plan
+            sample_audio_path: str | None = session.sample_audio_path
+
+            # Concurrently synthesize all scene voiceovers and generate scene canvas codes
+            async def _synthesize_voiceover() -> NarrationStoryboard | None:
+                if not narration_plan:
+                    return None
+                audio_dir = self.settings.audio_dir / project_folder
                 audio_dir.mkdir(parents=True, exist_ok=True)
                 sample_s1_audio: SceneAudio | None = None
-                if (
-                    session.sample_audio_path
-                    and Path(session.sample_audio_path).exists()
-                ):
+                if sample_audio_path and Path(sample_audio_path).exists():
                     sample_s1_audio = SceneAudio(
                         scene_number=1,
-                        audio_path=session.sample_audio_path,
-                        duration_seconds=get_wav_duration(session.sample_audio_path),
+                        audio_path=sample_audio_path,
+                        duration_seconds=get_wav_duration(sample_audio_path),
                         mime_type="audio/wav",
-                        file_size_bytes=Path(session.sample_audio_path).stat().st_size,
+                        file_size_bytes=Path(sample_audio_path).stat().st_size,
                     )
                 with track_component(project_id, PipelineComponent.VOICE_SYNTHESIS):
-                    narration_storyboard = await self.narrator.generate_full_narration(
-                        topic=session.topic,
-                        plan=session.narration_plan,
+                    return await self.narrator.generate_full_narration(
+                        topic=topic,
+                        plan=narration_plan,
                         output_dir=audio_dir,
                         sample_scene_1=sample_s1_audio,
+                        concurrency=self.settings.tts_concurrency,
                     )
+
+            async def _generate_animations() -> AnimationStoryboard:
+                with track_component(project_id, PipelineComponent.SCENE_ANIMATION):
+                    return await self.animator.animate_storyboard(
+                        topic=topic,
+                        script=script,
+                        style=style,
+                        sample_scene_1=sample_scene_1,
+                        concurrency=self.settings.animation_concurrency,
+                    )
+
+            # Execute voiceover synthesis and canvas code generation in parallel
+            narration_storyboard, storyboard = await asyncio.gather(
+                _synthesize_voiceover(),
+                _generate_animations(),
+            )
+
+            if narration_storyboard:
                 await self.db.save_narration_storyboard(
                     project_id=project_id,
                     storyboard=narration_storyboard,
                     final_audio_path=narration_storyboard.full_audio_path,
-                )
-
-            # Generate SVG + HTML Canvas code for all scenes in parallel
-            with track_component(project_id, PipelineComponent.SCENE_ANIMATION):
-                storyboard = await self.animator.animate_storyboard(
-                    topic=session.topic,
-                    script=session.script,
-                    style=session.style,
-                    sample_scene_1=sample_scene_1,
-                    narration_storyboard=narration_storyboard,
                 )
 
             # Save HTML animation codes
@@ -1061,11 +1093,11 @@ class TelegramBotService:
             scene_video_paths = await self.renderer.render_scenes_parallel(
                 scenes=storyboard.scenes,
                 output_dir=render_dir,
-                concurrency=3,
+                concurrency=self.settings.render_concurrency,
             )
 
             # Assemble final master MP4 video with narration audio muxed in
-            final_video_path = render_dir / f"final_video_{project_id}.mp4"
+            final_video_path = render_dir / f"final_video_{project_folder}.mp4"
             final_audio_p = (
                 Path(narration_storyboard.full_audio_path)
                 if narration_storyboard and narration_storyboard.full_audio_path
@@ -1099,55 +1131,158 @@ class TelegramBotService:
 
             await self.state_machine.transition(project_id, WorkflowState.COMPLETED)
 
-            # Send final video to user via Telegram
+            # Send final video or preview sample to user via Telegram
             if self.app and final_video_path.exists():
-                cost_summary = await get_cost_tracker().get_project_summary(project_id)
-                cost_badge = get_cost_tracker().format_short_badge(cost_summary)
-                cost_report = get_cost_tracker().format_telegram_report(cost_summary)
-
-                caption_lines = [
-                    "🎉 *Your Educational Video is Ready!* ✨",
-                    "",
-                    f"🎬 *Topic:* {session.topic}",
-                    f"🎨 *Style:* {session.style.style_name}",
-                ]
-                if session.narration_plan:
-                    caption_lines.append(
-                        f"🎙️ *Voice Talent:* {session.narration_plan.audio_profile_name} (`{session.narration_plan.voice_name}`)"
+                try:
+                    cost_summary = await get_cost_tracker().get_project_summary(
+                        project_id
                     )
-                caption_lines.append(
-                    f"📊 *Scenes:* {len(storyboard.scenes)} scenes assembled."
-                )
-                caption_lines.append(cost_badge)
-                caption = "\n".join(caption_lines)
+                    cost_badge = get_cost_tracker().format_short_badge(cost_summary)
+                    cost_report = get_cost_tracker().format_telegram_report(
+                        cost_summary
+                    )
 
-                video_bytes = final_video_path.read_bytes()
-                await self.app.bot.send_video(
-                    chat_id=session.chat_id,
-                    video=video_bytes,
-                    caption=caption,
-                    parse_mode=ParseMode.MARKDOWN,
-                )
+                    max_allowed_bytes = int(
+                        self.settings.telegram_max_video_size_mb * 1024 * 1024
+                    )
+                    max_preview_duration = (
+                        self.settings.telegram_preview_max_duration_seconds
+                    )
 
-                # Send detailed generation cost & token breakdown message
-                await self.app.bot.send_message(
-                    chat_id=session.chat_id,
-                    text=cost_report,
-                    parse_mode=ParseMode.MARKDOWN,
-                )
+                    file_size = final_video_path.stat().st_size
+
+                    # Probe video duration
+                    total_duration = 0.0
+                    try:
+                        total_duration = await self.renderer.get_media_duration(
+                            final_video_path
+                        )
+                    except (RuntimeError, OSError, ValueError) as dur_err:
+                        logger.warning(
+                            "Could not probe video duration from %s: %s",
+                            final_video_path,
+                            dur_err,
+                        )
+                        if storyboard.scenes:
+                            total_duration = sum(
+                                s.duration_seconds for s in storyboard.scenes
+                            )
+
+                    is_large_video = (
+                        total_duration > max_preview_duration
+                        or file_size > max_allowed_bytes
+                    )
+
+                    video_to_send = final_video_path
+                    is_preview = False
+
+                    if is_large_video:
+                        logger.info(
+                            "Video for project %s is large (duration=%.1fs, size=%.2fMB). Generating preview...",
+                            project_id,
+                            total_duration,
+                            file_size / (1024 * 1024),
+                        )
+                        preview_path = (
+                            render_dir / f"preview_video_{project_folder}.mp4"
+                        )
+                        try:
+                            video_to_send = await self.renderer.create_video_preview(
+                                video_path=final_video_path,
+                                output_path=preview_path,
+                                max_duration_seconds=max_preview_duration,
+                                max_file_size_bytes=max_allowed_bytes,
+                            )
+                            is_preview = True
+                        except (RuntimeError, OSError, ValueError) as preview_err:
+                            logger.error(
+                                "Failed to generate video preview for project %s: %s; falling back to full video",
+                                project_id,
+                                preview_err,
+                            )
+                            video_to_send = final_video_path
+                            is_preview = False
+
+                    total_duration_str = (
+                        format_duration(total_duration)
+                        if total_duration > 0
+                        else "Unknown"
+                    )
+
+                    caption_lines = [
+                        "🎉 *Your Educational Video is Ready!* ✨",
+                        "",
+                        f"🎬 *Topic:* {session.topic}",
+                        f"🎨 *Style:* {session.style.style_name}",
+                    ]
+                    if session.narration_plan:
+                        caption_lines.append(
+                            f"🎙️ *Voice Talent:* {session.narration_plan.audio_profile_name} (`{session.narration_plan.voice_name}`)"
+                        )
+
+                    if is_preview:
+                        preview_duration_str = format_duration(
+                            min(total_duration, max_preview_duration)
+                        )
+                        caption_lines.append(
+                            f"⏱️ *Duration:* {preview_duration_str} (Preview) • Total: {total_duration_str}"
+                        )
+                    elif total_duration > 0:
+                        caption_lines.append(f"⏱️ *Duration:* {total_duration_str}")
+
+                    caption_lines.append(
+                        f"📊 *Scenes:* {len(storyboard.scenes)} scenes assembled."
+                    )
+                    caption_lines.append(cost_badge)
+
+                    if is_preview:
+                        caption_lines.append("")
+                        caption_lines.append(
+                            f"ℹ️ *Preview Notice:* Due to Telegram's 50MB upload limit, this is a {format_duration(max_preview_duration)} preview sample. The full complete video ({total_duration_str}) has been generated and saved on the server."
+                        )
+
+                    caption = "\n".join(caption_lines)
+
+                    video_bytes = video_to_send.read_bytes()
+                    await self.app.bot.send_video(
+                        chat_id=session.chat_id,
+                        video=video_bytes,
+                        caption=caption,
+                        parse_mode=ParseMode.MARKDOWN,
+                    )
+
+                    # Send detailed generation cost & token breakdown message
+                    await self.app.bot.send_message(
+                        chat_id=session.chat_id,
+                        text=cost_report,
+                        parse_mode=ParseMode.MARKDOWN,
+                    )
+                except Exception as send_err:
+                    logger.exception(
+                        "Failed to send video to Telegram for project %s",
+                        project_id,
+                    )
+                    await self.app.bot.send_message(
+                        chat_id=session.chat_id,
+                        text=(
+                            f"⚠️ *Video generation completed, but delivery via Telegram failed:*\n`{send_err}`\n\n"
+                            f"Your full video file is safely saved on the server."
+                        ),
+                        parse_mode=ParseMode.MARKDOWN,
+                    )
 
         except Exception as err:
             logger.exception(
                 "Error during full animation pipeline for project %s", project_id
             )
-            await self.state_machine.transition(
-                project_id, WorkflowState.FAILED, error_message=str(err)
-            )
-            if self.app:
-                session = await self.db.get_project(project_id)
-                if session:
-                    await self.app.bot.send_message(
-                        chat_id=session.chat_id,
-                        text=f"⚠️ *An error occurred during video rendering and assembly:*\n`{err}`",
-                        parse_mode=ParseMode.MARKDOWN,
-                    )
+            session = await self.db.get_project(project_id)
+            if session and session.state != WorkflowState.COMPLETED:
+                await self.state_machine.transition(
+                    project_id, WorkflowState.FAILED, error_message=str(err)
+                )
+            if self.app and session:
+                await self.app.bot.send_message(
+                    chat_id=session.chat_id,
+                    text=f"⚠️ *An error occurred during video rendering and assembly:*\n`{err}`",
+                    parse_mode=ParseMode.MARKDOWN,
+                )

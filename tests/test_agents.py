@@ -7,7 +7,11 @@ import pytest
 from agents.base import BaseAgent
 from agents.evaluator import EvaluatorAgent
 from agents.researcher import ResearcherAgent
-from agents.script_writer import ScriptWriterAgent
+from agents.script_writer import (
+    ScriptWriterAgent,
+    calculate_scene_budget,
+    parse_duration_to_seconds,
+)
 from core.models import EvaluationResult, ResearchReport, Script
 
 
@@ -192,3 +196,54 @@ async def test_script_writer_agent_with_feedback(
     assert script.scenes[0].title == "The Quantum Coin Toss"
     assert "coin" in script.scenes[0].narration.lower()
     agent.client.aio.models.generate_content.assert_called_once()
+
+
+def test_parse_duration_to_seconds():
+    """Test duration string parsing across various human and bot inputs."""
+    assert parse_duration_to_seconds("2 min") == 120
+    assert parse_duration_to_seconds("2 minutes") == 120
+    assert parse_duration_to_seconds("5 minutes") == 300
+    assert parse_duration_to_seconds("~10 minutes") == 600
+    assert parse_duration_to_seconds("15m") == 900
+    assert parse_duration_to_seconds("30 seconds") == 30
+    assert parse_duration_to_seconds("45s") == 45
+    assert parse_duration_to_seconds("90 sec") == 90
+    assert parse_duration_to_seconds("3-minute") == 180
+    assert parse_duration_to_seconds("3-min") == 180
+    assert parse_duration_to_seconds("45-second") == 45
+    assert parse_duration_to_seconds("60-sec") == 60
+    assert parse_duration_to_seconds("unknown", default_seconds=300) == 300
+    assert parse_duration_to_seconds("", default_seconds=600) == 600
+
+
+def test_calculate_scene_budget():
+    """Test dynamic scene budgeting scaling across different video durations."""
+    # 1 min (60s) -> minimum 4 scenes
+    min_s, max_s, avg_dur = calculate_scene_budget(60)
+    assert min_s == 4
+    assert max_s <= 5
+    assert avg_dur <= 20
+
+    # 2 min (120s) -> 5 to 7 scenes (~20s each)
+    min_s, max_s, avg_dur = calculate_scene_budget(120)
+    assert min_s == 5
+    assert max_s == 7
+    assert avg_dur == 20
+
+    # 5 min (300s) -> 14 to 16 scenes (~20s each)
+    min_s, max_s, avg_dur = calculate_scene_budget(300)
+    assert min_s == 14
+    assert max_s == 16
+    assert avg_dur == 20
+
+    # 10 min (600s) -> 29 to 30 scenes (~20s each)
+    min_s, max_s, avg_dur = calculate_scene_budget(600)
+    assert min_s == 29
+    assert max_s == 30
+    assert avg_dur == 20
+
+    # 30 min (1800s) -> clamped to max_scenes=30
+    min_s, max_s, avg_dur = calculate_scene_budget(1800)
+    assert min_s == 29
+    assert max_s == 30
+    assert avg_dur >= 50

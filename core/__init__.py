@@ -13,6 +13,7 @@ from core.models import (
     Script,
     ScriptScene,
     WorkflowState,
+    compute_project_folder,
 )
 from core.state_machine import InvalidStateTransitionError, PipelineStateMachine
 
@@ -33,5 +34,6 @@ __all__ = [
     "Script",
     "ScriptScene",
     "WorkflowState",
+    "compute_project_folder",
     "get_db_manager",
 ]
