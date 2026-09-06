@@ -150,3 +150,21 @@ def combine_wav_files(
                 w_out.writeframes(w_in.readframes(w_in.getnframes()))
 
     return out_p
+
+
+def format_duration(seconds: float) -> str:
+    """Format duration in seconds into a human-readable string (e.g. '3m 00s' or '1h 05m 20s').
+
+    Args:
+        seconds: Total duration in seconds.
+
+    Returns:
+        Formatted string representation.
+    """
+    total_seconds = max(0, round(seconds))
+    hours = total_seconds // 3600
+    minutes = (total_seconds % 3600) // 60
+    secs = total_seconds % 60
+    if hours > 0:
+        return f"{hours}h {minutes:02d}m {secs:02d}s"
+    return f"{minutes}m {secs:02d}s"

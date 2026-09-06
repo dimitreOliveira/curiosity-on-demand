@@ -1,10 +1,13 @@
 """Unit tests for Pydantic models and schemas."""
 
+from datetime import UTC, datetime
+
 from core.models import (
     ProjectSession,
     ResearchReport,
     ResearchSection,
     WorkflowState,
+    compute_project_folder,
 )
 
 
@@ -170,3 +173,46 @@ def test_narration_models_serialization(
     reconstructed_sb = NarrationStoryboard.model_validate_json(sb_json)
     assert reconstructed_sb.topic == sample_narration_storyboard.topic
     assert len(reconstructed_sb.scenes_audio) == 3
+
+
+def test_compute_project_folder():
+    """Test compute_project_folder logic for slugification, formatting, and fallbacks."""
+    fixed_dt = datetime(2026, 9, 5, 20, 15, 30, tzinfo=UTC)
+
+    # Standard topic
+    folder = compute_project_folder("The Dinossaurs eras", fixed_dt)
+    assert folder == "the_dinossaurs_eras_20260905_201530"
+
+    # Special characters and punctuation
+    folder_special = compute_project_folder("Why the sky is blue? (Part 1!)", fixed_dt)
+    assert folder_special == "why_the_sky_is_blue_part_1_20260905_201530"
+
+    # Non-alphanumeric fallback
+    folder_fallback = compute_project_folder("!!!???---", fixed_dt)
+    assert folder_fallback == "project_20260905_201530"
+
+    # ISO string timestamp input
+    folder_iso = compute_project_folder("Quantum Physics", "2026-09-05T20:15:30+00:00")
+    assert folder_iso == "quantum_physics_20260905_201530"
+
+    # Default timestamp uses current time
+    folder_now = compute_project_folder("Black Holes")
+    assert folder_now.startswith("black_holes_")
+
+
+def test_project_session_project_folder():
+    """Test that ProjectSession automatically sets project_folder and preserves custom value."""
+    session = ProjectSession(
+        user_id=1,
+        chat_id=2,
+        topic="The Cthulhu mythos",
+    )
+    assert session.project_folder.startswith("the_cthulhu_mythos_")
+
+    custom_session = ProjectSession(
+        user_id=1,
+        chat_id=2,
+        topic="The Cthulhu mythos",
+        project_folder="custom_folder_name",
+    )
+    assert custom_session.project_folder == "custom_folder_name"

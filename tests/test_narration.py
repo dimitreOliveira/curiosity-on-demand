@@ -10,6 +10,7 @@ from agents.narrator import NarratorAgent
 from core.audio_utils import (
     combine_wav_files,
     convert_to_wav,
+    format_duration,
     get_wav_duration,
     parse_audio_mime_type,
 )
@@ -80,6 +81,16 @@ def test_combine_wav_files_empty_raises(tmp_path):
     """Test that combining an empty list of files raises ValueError."""
     with pytest.raises(ValueError, match="No valid.*WAV files provided"):
         combine_wav_files([], tmp_path / "empty.wav")
+
+
+def test_format_duration():
+    """Test formatting seconds into readable duration strings."""
+    assert format_duration(0) == "0m 00s"
+    assert format_duration(45) == "0m 45s"
+    assert format_duration(65) == "1m 05s"
+    assert format_duration(180) == "3m 00s"
+    assert format_duration(324) == "5m 24s"
+    assert format_duration(3665) == "1h 01m 05s"
 
 
 # ---------------------------------------------------------------------------

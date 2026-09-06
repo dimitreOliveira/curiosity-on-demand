@@ -1,10 +1,29 @@
 """Core data models and schemas for Curiosity On Demand pipeline."""
 
+import re
 from datetime import UTC, datetime
 from enum import Enum
+from typing import Self
 from uuid import uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+
+def compute_project_folder(topic: str, created_at: datetime | str | None = None) -> str:
+    """Generate visual storage folder name based on topic slug and creation timestamp."""
+    topic_slug = (
+        re.sub(r"[^\w]+", "_", (topic or "").strip().lower()).strip("_") or "project"
+    )
+    if isinstance(created_at, datetime):
+        ts = created_at.strftime("%Y%m%d_%H%M%S")
+    elif isinstance(created_at, str):
+        try:
+            ts = datetime.fromisoformat(created_at).strftime("%Y%m%d_%H%M%S")
+        except ValueError:
+            ts = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
+    else:
+        ts = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
+    return f"{topic_slug}_{ts}"
 
 
 class WorkflowState(str, Enum):
@@ -257,12 +276,23 @@ class ProjectSession(BaseModel):
         default_factory=lambda: str(uuid4()),
         description="Unique project identifier",
     )
+    project_folder: str = Field(
+        default="",
+        description="Directory folder name for visual project asset storage",
+    )
     user_id: int = Field(description="Telegram user ID")
     chat_id: int = Field(description="Telegram chat ID")
     topic: str = Field(description="User submitted topic or inquiry")
     state: WorkflowState = Field(
         default=WorkflowState.IDLE, description="Current workflow state"
     )
+
+    @model_validator(mode="after")
+    def _ensure_project_folder(self) -> Self:
+        if not self.project_folder and self.topic:
+            self.project_folder = compute_project_folder(self.topic, self.created_at)
+        return self
+
     research_report: ResearchReport | None = Field(
         default=None, description="Researched report and subtopics"
     )

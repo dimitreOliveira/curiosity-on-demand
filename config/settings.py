@@ -89,6 +89,26 @@ class Settings(BaseSettings):
         alias="DEFAULT_VIDEO_DURATION_MINUTES",
         description="Default target video duration in minutes when unspecified",
     )
+    render_concurrency: int = Field(
+        default=3,
+        alias="RENDER_CONCURRENCY",
+        description="Maximum concurrent Playwright browser scene rendering sessions",
+    )
+    tts_concurrency: int = Field(
+        default=3,
+        alias="TTS_CONCURRENCY",
+        description="Maximum concurrent Gemini TTS speech synthesis tasks",
+    )
+    animation_concurrency: int = Field(
+        default=3,
+        alias="ANIMATION_CONCURRENCY",
+        description="Maximum concurrent Gemini LLM scene canvas code generation tasks",
+    )
+    ffmpeg_concurrency: int = Field(
+        default=4,
+        alias="FFMPEG_CONCURRENCY",
+        description="Maximum concurrent FFmpeg audio/video retiming and muxing processes",
+    )
 
     # Telegram Bot Configuration
     telegram_bot_token: str = Field(
@@ -100,6 +120,16 @@ class Settings(BaseSettings):
         default_factory=list,
         alias="TELEGRAM_ALLOWED_USERS",
         description="Optional list of Telegram user IDs or usernames permitted to trigger pipeline",
+    )
+    telegram_max_video_size_mb: float = Field(
+        default=49.0,
+        alias="TELEGRAM_MAX_VIDEO_SIZE_MB",
+        description="Maximum video size in MB allowed for Telegram upload (standard limit is 50MB)",
+    )
+    telegram_preview_max_duration_seconds: float = Field(
+        default=180.0,
+        alias="TELEGRAM_PREVIEW_MAX_DURATION_SECONDS",
+        description="Maximum duration in seconds for video preview sent via Telegram when full video exceeds limits",
     )
 
     @field_validator("telegram_allowed_users", mode="after")

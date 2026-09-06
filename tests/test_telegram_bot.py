@@ -18,6 +18,15 @@ def test_extract_target_duration():
     assert extract_target_duration("History of Rome in 15 minutes") == "15 minutes"
     assert extract_target_duration("Black holes 2m short") == "2 minutes"
     assert (
+        extract_target_duration(
+            "A 3-minute video about the different chinese cuisine Traditions"
+        )
+        == "3 minutes"
+    )
+    assert extract_target_duration("A 3-min video about dinosaurs") == "3 minutes"
+    assert extract_target_duration("Quick 45-second overview") == "45 seconds"
+    assert extract_target_duration("Quick 30s recap") == "30 seconds"
+    assert (
         extract_target_duration("How photosynthesis works", default_minutes=10)
         == "~10 minutes"
     )
@@ -336,6 +345,7 @@ async def test_telegram_bot_run_style_pipeline(
     assert updated.style is not None
     assert updated.style.style_name == sample_animation_style.style_name
     assert updated.sample_frame_path is not None
+    assert session.project_folder in updated.sample_frame_path
 
     assert bot_service.planner.plan_style.call_count == 1
     assert bot_service.animator.animate_scene.call_count == 1
@@ -475,6 +485,7 @@ async def test_telegram_bot_run_full_animation_pipeline(
 
     bot_service.renderer.render_scene_video = AsyncMock(side_effect=mock_render_video)
     bot_service.renderer.assemble_video = AsyncMock(side_effect=mock_assemble)
+    bot_service.renderer.get_media_duration = AsyncMock(return_value=20.0)
 
     mock_app = MagicMock()
     mock_app.bot.send_message = AsyncMock()
@@ -514,6 +525,7 @@ async def test_telegram_bot_run_full_animation_pipeline(
     assert updated.state == WorkflowState.COMPLETED
     assert updated.storyboard is not None
     assert updated.final_video_path is not None
+    assert session.project_folder in updated.final_video_path
 
     assert bot_service.animator.animate_storyboard.call_count == 1
     assert bot_service.renderer.render_scene_video.call_count == len(
@@ -522,6 +534,8 @@ async def test_telegram_bot_run_full_animation_pipeline(
     assert mock_app.bot.send_video.call_count == 1
     caption_sent = mock_app.bot.send_video.call_args[1]["caption"]
     assert "Est. Cost:" in caption_sent
+    assert "⏱️ *Duration:* 0m 20s" in caption_sent
+    assert "(Preview)" not in caption_sent
     assert mock_app.bot.send_message.call_count >= 1
     # Check that a breakdown message was sent
     breakdown_calls = [
@@ -530,6 +544,177 @@ async def test_telegram_bot_run_full_animation_pipeline(
         if "Resource & Cost Breakdown" in call[1].get("text", "")
     ]
     assert len(breakdown_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_full_animation_pipeline_large_video_sends_preview(
+    mock_settings,
+    memory_db,
+    sample_research_report,
+    sample_script,
+    sample_animation_style,
+    sample_storyboard,
+    tmp_path,
+):
+    """Test that videos exceeding duration limit generate and send a 3-minute preview with proper notice."""
+    bot_service = TelegramBotService(settings=mock_settings, db=memory_db)
+    bot_service.animator.animate_storyboard = AsyncMock(return_value=sample_storyboard)
+
+    async def mock_render_video(html_content, output_video_path, **kwargs):
+        output_video_path.parent.mkdir(parents=True, exist_ok=True)
+        output_video_path.write_bytes(b"FakeSceneVideoBytes")
+        return output_video_path
+
+    async def mock_assemble(scene_video_paths, output_video_path, *args, **kwargs):
+        output_video_path.parent.mkdir(parents=True, exist_ok=True)
+        output_video_path.write_bytes(b"FakeMasterVideoBytes")
+        return output_video_path
+
+    preview_file = tmp_path / "preview.mp4"
+    preview_file.write_bytes(b"Sample3MinPreviewBytes")
+
+    async def mock_preview(video_path, output_path, **kwargs):
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(b"Sample3MinPreviewBytes")
+        return output_path
+
+    bot_service.renderer.render_scene_video = AsyncMock(side_effect=mock_render_video)
+    bot_service.renderer.assemble_video = AsyncMock(side_effect=mock_assemble)
+    # Total duration is 5 minutes 24 seconds (324s > 180s preview limit)
+    bot_service.renderer.get_media_duration = AsyncMock(return_value=324.0)
+    bot_service.renderer.create_video_preview = AsyncMock(side_effect=mock_preview)
+
+    mock_app = MagicMock()
+    mock_app.bot.send_message = AsyncMock()
+    mock_app.bot.send_video = AsyncMock()
+    bot_service.app = mock_app
+
+    session = await memory_db.create_project(
+        user_id=123, chat_id=456, topic="History of Rome"
+    )
+    await memory_db.save_research_report(session.project_id, sample_research_report)
+    await memory_db.save_script(session.project_id, sample_script)
+    await memory_db.save_style(session.project_id, sample_animation_style)
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.RESEARCHING
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.AWAITING_RESEARCH_APPROVAL
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.SCRIPTING
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.AWAITING_SCRIPT_APPROVAL
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.STYLING
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.AWAITING_STYLE_APPROVAL
+    )
+
+    await bot_service._run_full_animation_pipeline(session.project_id)
+
+    updated = await memory_db.get_project(session.project_id)
+    assert updated is not None
+    assert updated.state == WorkflowState.COMPLETED
+
+    # Verify create_video_preview was called with 180.0s max duration
+    assert bot_service.renderer.create_video_preview.call_count == 1
+    call_kwargs = bot_service.renderer.create_video_preview.call_args[1]
+    assert call_kwargs["max_duration_seconds"] == 180.0
+
+    # Verify preview video bytes were sent
+    assert mock_app.bot.send_video.call_count == 1
+    sent_video = mock_app.bot.send_video.call_args[1]["video"]
+    assert sent_video == b"Sample3MinPreviewBytes"
+
+    # Verify caption mentions preview duration, total duration, and informational notice
+    caption = mock_app.bot.send_video.call_args[1]["caption"]
+    assert "⏱️ *Duration:* 3m 00s (Preview) • Total: 5m 24s" in caption
+    assert "Preview Notice" in caption
+    assert "50MB" in caption
+    assert "saved on the server" in caption
+
+
+@pytest.mark.asyncio
+async def test_full_animation_pipeline_send_failure_graceful_handling(
+    mock_settings,
+    memory_db,
+    sample_research_report,
+    sample_script,
+    sample_animation_style,
+    sample_storyboard,
+):
+    """Test that Telegram send failure does not cause illegal COMPLETED->FAILED transition."""
+    bot_service = TelegramBotService(settings=mock_settings, db=memory_db)
+    bot_service.animator.animate_storyboard = AsyncMock(return_value=sample_storyboard)
+
+    async def mock_render_video(html_content, output_video_path, **kwargs):
+        output_video_path.parent.mkdir(parents=True, exist_ok=True)
+        output_video_path.write_bytes(b"FakeSceneVideoBytes")
+        return output_video_path
+
+    async def mock_assemble(scene_video_paths, output_video_path, *args, **kwargs):
+        output_video_path.parent.mkdir(parents=True, exist_ok=True)
+        output_video_path.write_bytes(b"FakeMasterVideoBytes")
+        return output_video_path
+
+    bot_service.renderer.render_scene_video = AsyncMock(side_effect=mock_render_video)
+    bot_service.renderer.assemble_video = AsyncMock(side_effect=mock_assemble)
+    bot_service.renderer.get_media_duration = AsyncMock(return_value=20.0)
+
+    mock_app = MagicMock()
+    mock_app.bot.send_message = AsyncMock()
+    # Simulate network error on send_video
+    mock_app.bot.send_video = AsyncMock(
+        side_effect=Exception("Request Entity Too Large")
+    )
+    bot_service.app = mock_app
+
+    session = await memory_db.create_project(
+        user_id=123, chat_id=456, topic="Black Holes"
+    )
+    await memory_db.save_research_report(session.project_id, sample_research_report)
+    await memory_db.save_script(session.project_id, sample_script)
+    await memory_db.save_style(session.project_id, sample_animation_style)
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.RESEARCHING
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.AWAITING_RESEARCH_APPROVAL
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.SCRIPTING
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.AWAITING_SCRIPT_APPROVAL
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.STYLING
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.AWAITING_STYLE_APPROVAL
+    )
+
+    # Pipeline should complete without crashing with InvalidStateTransitionError
+    await bot_service._run_full_animation_pipeline(session.project_id)
+
+    updated = await memory_db.get_project(session.project_id)
+    assert updated is not None
+    # Project state remains COMPLETED because render and assembly succeeded
+    assert updated.state == WorkflowState.COMPLETED
+
+    # Verify error message sent to user
+    failure_msgs = [
+        call[1]["text"]
+        for call in mock_app.bot.send_message.call_args_list
+        if "delivery via Telegram failed" in call[1].get("text", "")
+    ]
+    assert len(failure_msgs) == 1
+    assert "Request Entity Too Large" in failure_msgs[0]
+    assert "safely saved on the server" in failure_msgs[0]
 
 
 @pytest.mark.asyncio
@@ -719,6 +904,8 @@ async def test_telegram_bot_run_narration_pipeline(
     assert updated.sample_audio_path == sample_scene_audio.audio_path
 
     bot_service.narrator.determine_plan_and_sample.assert_called_once()
+    call_kwargs = bot_service.narrator.determine_plan_and_sample.call_args.kwargs
+    assert session.project_folder in str(call_kwargs["output_dir"])
     bot_service._send_narration_results.assert_called_once_with(
         chat_id=456,
         plan=sample_narration_plan,
@@ -851,3 +1038,96 @@ async def test_telegram_bot_narration_feedback_flow(
         session.project_id,
         user_feedback="Please make the tone more playful and use Puck voice",
     )
+
+
+@pytest.mark.asyncio
+async def test_full_animation_pipeline_concurrent_narration_and_animation(
+    mock_settings,
+    memory_db,
+    sample_research_report,
+    sample_script,
+    sample_animation_style,
+    sample_storyboard,
+    sample_narration_plan,
+    sample_narration_storyboard,
+):
+    """Test that voice synthesis and scene animation run concurrently and apply configured concurrency."""
+    bot_service = TelegramBotService(settings=mock_settings, db=memory_db)
+    bot_service.animator.animate_storyboard = AsyncMock(return_value=sample_storyboard)
+    bot_service.narrator.generate_full_narration = AsyncMock(
+        return_value=sample_narration_storyboard
+    )
+
+    async def mock_render_video(html_content, output_video_path, **kwargs):
+        output_video_path.parent.mkdir(parents=True, exist_ok=True)
+        output_video_path.write_bytes(b"FakeSceneVideoBytes")
+        return output_video_path
+
+    async def mock_assemble(scene_video_paths, output_video_path, *args, **kwargs):
+        output_video_path.parent.mkdir(parents=True, exist_ok=True)
+        output_video_path.write_bytes(b"FakeMasterVideoBytes")
+        return output_video_path
+
+    bot_service.renderer.render_scene_video = AsyncMock(side_effect=mock_render_video)
+    bot_service.renderer.assemble_video = AsyncMock(side_effect=mock_assemble)
+    bot_service.renderer.get_media_duration = AsyncMock(return_value=20.0)
+
+    mock_app = MagicMock()
+    mock_app.bot.send_message = AsyncMock()
+    mock_app.bot.send_video = AsyncMock()
+    bot_service.app = mock_app
+
+    session = await memory_db.create_project(
+        user_id=123, chat_id=456, topic="Parallel Pipeline"
+    )
+    await memory_db.save_research_report(session.project_id, sample_research_report)
+    await memory_db.save_script(session.project_id, sample_script)
+    await memory_db.save_narration_plan(
+        session.project_id, sample_narration_plan, "storage/sample.wav"
+    )
+    await memory_db.save_style(session.project_id, sample_animation_style)
+
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.RESEARCHING
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.AWAITING_RESEARCH_APPROVAL
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.SCRIPTING
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.AWAITING_SCRIPT_APPROVAL
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.NARRATING
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.AWAITING_NARRATION_APPROVAL
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.STYLING
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.AWAITING_STYLE_APPROVAL
+    )
+
+    await bot_service._run_full_animation_pipeline(session.project_id)
+
+    # Verify both agents were invoked with configured concurrency
+    assert bot_service.narrator.generate_full_narration.call_count == 1
+    assert (
+        bot_service.narrator.generate_full_narration.call_args[1]["concurrency"]
+        == mock_settings.tts_concurrency
+    )
+    assert bot_service.animator.animate_storyboard.call_count == 1
+    assert (
+        bot_service.animator.animate_storyboard.call_args[1]["concurrency"]
+        == mock_settings.animation_concurrency
+    )
+
+    # Verify narration storyboard persisted
+    updated = await memory_db.get_project(session.project_id)
+    assert updated is not None
+    assert updated.state == WorkflowState.COMPLETED
+    assert updated.narration_storyboard is not None
