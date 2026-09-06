@@ -150,3 +150,103 @@ async def test_scene_animator_animate_storyboard(
     assert len(storyboard.scenes) == len(sample_script.scenes)
     # Scene 1 was passed as sample_scene_1, so animate_scene is called only for scenes 2 and 3
     assert agent.animate_scene.call_count == len(sample_script.scenes) - 1
+
+
+@pytest.mark.asyncio
+async def test_scene_animator_animate_scene_vertical(
+    mock_settings, sample_script, sample_animation_style
+):
+    """Test SceneAnimatorAgent generating vertical 9:16 animation for short videos."""
+    agent = SceneAnimatorAgent(settings=mock_settings)
+
+    raw_html_response = (
+        "```html\n"
+        "<!DOCTYPE html>\n"
+        "<html>\n"
+        "<head><style>body { margin: 0; }</style></head>\n"
+        "<body>\n"
+        '<canvas id="stage" width="720" height="1280"></canvas>\n'
+        "<script>\n"
+        "const canvas = document.getElementById('stage');\n"
+        "const ctx = canvas.getContext('2d');\n"
+        "</script>\n"
+        "</body>\n"
+        "</html>\n"
+        "```"
+    )
+
+    mock_resp = MagicMock()
+    mock_resp.text = raw_html_response
+    agent.client.aio.models.generate_content = AsyncMock(return_value=mock_resp)
+
+    result = await agent.animate_scene(
+        topic="Quick Quantum Intro (60s)",
+        scene=sample_script.scenes[0],
+        style=sample_animation_style,
+        duration_seconds=15,
+        total_video_duration=60,
+    )
+
+    assert isinstance(result, SceneAnimation)
+    assert '<canvas id="stage" width="720" height="1280">' in result.html_content
+    agent.client.aio.models.generate_content.assert_called_once()
+    # Check prompt passed to generate_content
+    call_args = agent.client.aio.models.generate_content.call_args
+    prompt_used = call_args[1].get("contents", "")
+    assert "9:16 Vertical Portrait" in prompt_used
+    assert "720x1280" in prompt_used
+
+
+@pytest.mark.asyncio
+async def test_scene_animator_animate_storyboard_vertical(
+    mock_settings, sample_animation_style
+):
+    """Test SceneAnimatorAgent auto-detecting vertical format for storyboard with duration <= 120s."""
+    from core.models import Script, ScriptScene
+
+    short_script = Script(
+        topic="Neutron Stars in 60s",
+        summary="Short video",
+        scenes=[
+            ScriptScene(
+                scene_number=1,
+                title="Scene 1",
+                summary="Intro",
+                description="Intro visuals",
+                duration_seconds=30,
+                narration="Welcome to neutron stars.",
+            ),
+            ScriptScene(
+                scene_number=2,
+                title="Scene 2",
+                summary="Climax",
+                description="Collapse visuals",
+                duration_seconds=30,
+                narration="A massive core collapses.",
+            ),
+        ],
+    )
+
+    agent = SceneAnimatorAgent(settings=mock_settings)
+    mock_anim = SceneAnimation(
+        scene_number=1,
+        title="Scene 1",
+        html_content="<!DOCTYPE html><html><body><canvas width='720' height='1280'></canvas></body></html>",
+        duration_seconds=30,
+    )
+    agent.animate_scene = AsyncMock(return_value=mock_anim)
+
+    storyboard = await agent.animate_storyboard(
+        topic="Neutron Stars in 60s",
+        script=short_script,
+        style=sample_animation_style,
+    )
+
+    assert isinstance(storyboard, AnimationStoryboard)
+    assert len(storyboard.scenes) == 2
+    assert agent.animate_scene.call_count == 2
+    # Verify vertical dimensions were passed down
+    call_kwargs = agent.animate_scene.call_args_list[0][1]
+    assert call_kwargs["is_vertical"] is True
+    assert call_kwargs["width"] == 720
+    assert call_kwargs["height"] == 1280

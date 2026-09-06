@@ -202,6 +202,8 @@ class AnimationRenderer:
         concurrency: int | None = None,
         fps: int = 30,
         browser: Browser | None = None,
+        width: int | None = None,
+        height: int | None = None,
     ) -> list[Path]:
         """Render all scene animations concurrently in parallel using isolated browser recording sessions."""
         if not scenes:
@@ -209,10 +211,24 @@ class AnimationRenderer:
 
         limit = concurrency or self.settings.render_concurrency
         output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Resolve dimensions if not explicitly passed
+        if width is not None and height is not None:
+            w, h = width, height
+        else:
+            total_dur = sum(s.duration_seconds for s in scenes)
+            w, h = (
+                self.settings.get_video_dimensions(duration_seconds=total_dur)
+                if total_dur > 0
+                else (self.settings.video_width, self.settings.video_height)
+            )
+
         logger.info(
-            "Rendering %d scenes in parallel (concurrency limit: %d) into %s",
+            "Rendering %d scenes in parallel (concurrency limit: %d, %dx%d) into %s",
             len(scenes),
             limit,
+            w,
+            h,
             output_dir,
         )
 
@@ -233,6 +249,8 @@ class AnimationRenderer:
                     html_content=scene_anim.html_content,
                     output_video_path=video_path,
                     duration_seconds=scene_anim.duration_seconds,
+                    width=w,
+                    height=h,
                     fps=fps,
                     browser=target_browser,
                 )

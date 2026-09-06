@@ -22,7 +22,7 @@ from agents.evaluator import EvaluatorAgent
 from agents.narrator import NarratorAgent
 from agents.researcher import ResearcherAgent
 from agents.scene_animator import SceneAnimatorAgent
-from agents.script_writer import ScriptWriterAgent
+from agents.script_writer import ScriptWriterAgent, parse_duration_to_seconds
 from config.settings import Settings, get_settings
 from core.audio_utils import format_duration, get_wav_duration
 from core.cost_tracker import (
@@ -36,6 +36,7 @@ from core.models import (
     AnimationStyle,
     NarrationPlan,
     NarrationStoryboard,
+    ProjectSession,
     ResearchReport,
     SceneAnimation,
     SceneAudio,
@@ -102,6 +103,36 @@ class TelegramBotService:
         if user_id is not None and str(user_id) in allowed_str:
             return True
         return bool(username and username.lower().lstrip("@") in allowed_str)
+
+    def _get_project_video_duration(self, session: ProjectSession) -> float:
+        """Calculate the project's target or actual video duration in seconds.
+
+        Priority order:
+        1. Narration storyboard total audio duration (if synthesized)
+        2. Script scenes total duration (if script generated)
+        3. Parsed target duration from topic text
+        4. Default video duration from settings
+        """
+        if (
+            session.narration_storyboard
+            and session.narration_storyboard.total_duration_seconds > 0
+        ):
+            return float(session.narration_storyboard.total_duration_seconds)
+
+        if session.script and session.script.scenes:
+            script_duration = sum(s.duration_seconds for s in session.script.scenes)
+            if script_duration > 0:
+                return float(script_duration)
+
+        if session.topic:
+            target_str = extract_target_duration(
+                session.topic, self.settings.default_video_duration_minutes
+            )
+            parsed_sec = parse_duration_to_seconds(target_str)
+            if parsed_sec > 0:
+                return float(parsed_sec)
+
+        return float(self.settings.default_video_duration_minutes * 60)
 
     async def build_application(self) -> Application:
         """Build and configure the python-telegram-bot Application."""
@@ -844,12 +875,19 @@ class TelegramBotService:
 
             await self.state_machine.transition(project_id, WorkflowState.STYLING)
 
+            total_duration = self._get_project_video_duration(session)
+            is_vertical = self.settings.is_vertical_video(total_duration)
+            video_width, video_height = self.settings.get_video_dimensions(
+                total_duration
+            )
+
             with track_component(project_id, PipelineComponent.STYLE_PLANNING):
                 style = await self.planner.plan_style(
                     topic=session.topic,
                     script=session.script,
                     feedback=user_feedback,
                     previous_style=session.style,
+                    is_vertical=is_vertical,
                 )
 
             scene_1 = session.script.scenes[0] if session.script.scenes else None
@@ -868,6 +906,10 @@ class TelegramBotService:
                     scene=scene_1,
                     style=style,
                     duration_seconds=s1_duration,
+                    width=video_width,
+                    height=video_height,
+                    is_vertical=is_vertical,
+                    total_video_duration=total_duration,
                 )
 
             # Persist Scene 1 HTML code
@@ -885,6 +927,8 @@ class TelegramBotService:
             await self.renderer.render_sample_frame(
                 html_content=scene_1_anim.html_content,
                 output_image_path=sample_frame_path,
+                width=video_width,
+                height=video_height,
             )
 
             await self.db.save_style(
@@ -902,6 +946,9 @@ class TelegramBotService:
                 style=style,
                 sample_frame_path=sample_frame_path,
                 project_id=project_id,
+                is_vertical=is_vertical,
+                width=video_width,
+                height=video_height,
             )
 
         except Exception as err:
@@ -926,6 +973,9 @@ class TelegramBotService:
         style: AnimationStyle,
         sample_frame_path: Path,
         project_id: str,
+        is_vertical: bool = False,
+        width: int = 1280,
+        height: int = 720,
     ) -> None:
         """Send formatted style overview and rendered Scene 1 sample image to chat."""
         if not self.app:
@@ -941,8 +991,15 @@ class TelegramBotService:
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
 
+        format_str = (
+            f"📱 *Format:* Vertical 9:16 ({width}x{height} • YouTube Shorts style)\n"
+            if is_vertical
+            else f"🖥️ *Format:* Horizontal 16:9 ({width}x{height} • Widescreen)\n"
+        )
+
         caption = (
             f"🎨 *Visual Style Design: {style.style_name}*\n\n"
+            f"{format_str}\n"
             f"📋 *Art Direction:*\n{style.visual_description}\n\n"
             "💬 *Next Steps:*\n"
             "• Click *Approve Style* below to generate full scene animations & assemble the video.\n"
@@ -1037,6 +1094,13 @@ class TelegramBotService:
             narration_plan: NarrationPlan | None = session.narration_plan
             sample_audio_path: str | None = session.sample_audio_path
 
+            # Determine dynamic video format and dimensions based on duration
+            project_duration = self._get_project_video_duration(session)
+            is_vertical = self.settings.is_vertical_video(project_duration)
+            video_width, video_height = self.settings.get_video_dimensions(
+                project_duration
+            )
+
             # Concurrently synthesize all scene voiceovers and generate scene canvas codes
             async def _synthesize_voiceover() -> NarrationStoryboard | None:
                 if not narration_plan:
@@ -1069,6 +1133,10 @@ class TelegramBotService:
                         style=style,
                         sample_scene_1=sample_scene_1,
                         concurrency=self.settings.animation_concurrency,
+                        width=video_width,
+                        height=video_height,
+                        is_vertical=is_vertical,
+                        total_video_duration=project_duration,
                     )
 
             # Execute voiceover synthesis and canvas code generation in parallel
@@ -1094,6 +1162,8 @@ class TelegramBotService:
                 scenes=storyboard.scenes,
                 output_dir=render_dir,
                 concurrency=self.settings.render_concurrency,
+                width=video_width,
+                height=video_height,
             )
 
             # Assemble final master MP4 video with narration audio muxed in
@@ -1233,6 +1303,12 @@ class TelegramBotService:
                     caption_lines.append(
                         f"📊 *Scenes:* {len(storyboard.scenes)} scenes assembled."
                     )
+                    format_badge = (
+                        f"📱 *Format:* Vertical 9:16 ({video_width}x{video_height} • Shorts)"
+                        if is_vertical
+                        else f"🖥️ *Format:* Horizontal 16:9 ({video_width}x{video_height})"
+                    )
+                    caption_lines.append(format_badge)
                     caption_lines.append(cost_badge)
 
                     if is_preview:
@@ -1248,6 +1324,8 @@ class TelegramBotService:
                         chat_id=session.chat_id,
                         video=video_bytes,
                         caption=caption,
+                        width=video_width,
+                        height=video_height,
                         parse_mode=ParseMode.MARKDOWN,
                     )
 

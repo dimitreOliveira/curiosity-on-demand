@@ -67,12 +67,27 @@ class Settings(BaseSettings):
     video_width: int = Field(
         default=1280,
         alias="VIDEO_WIDTH",
-        description="Rendered video width in pixels",
+        description="Rendered horizontal video width in pixels",
     )
     video_height: int = Field(
         default=720,
         alias="VIDEO_HEIGHT",
-        description="Rendered video height in pixels",
+        description="Rendered horizontal video height in pixels",
+    )
+    vertical_video_width: int = Field(
+        default=720,
+        alias="VERTICAL_VIDEO_WIDTH",
+        description="Rendered vertical video width in pixels (YouTube Shorts style)",
+    )
+    vertical_video_height: int = Field(
+        default=1280,
+        alias="VERTICAL_VIDEO_HEIGHT",
+        description="Rendered vertical video height in pixels (YouTube Shorts style)",
+    )
+    vertical_video_threshold_seconds: int = Field(
+        default=120,
+        alias="VERTICAL_VIDEO_THRESHOLD_SECONDS",
+        description="Video duration threshold in seconds (inclusive) under which videos are generated in vertical format",
     )
     default_scene_duration_seconds: int = Field(
         default=10,
@@ -191,6 +206,27 @@ class Settings(BaseSettings):
     def audio_dir(self) -> Path:
         """Directory for synthesized voiceover narration audio files."""
         return self.storage_dir / "audio"
+
+    def is_vertical_video(self, duration_seconds: float | None = None) -> bool:
+        """Check if video should be rendered in vertical format based on duration.
+
+        Videos with duration of 2 minutes or shorter (<= 120s) use vertical format (YouTube Shorts style).
+        """
+        if duration_seconds is None or duration_seconds <= 0:
+            return False
+        return duration_seconds <= self.vertical_video_threshold_seconds
+
+    def get_video_dimensions(
+        self,
+        duration_seconds: float | None = None,
+        is_vertical: bool | None = None,
+    ) -> tuple[int, int]:
+        """Return (width, height) based on duration or explicit vertical flag."""
+        if is_vertical is True or (
+            is_vertical is None and self.is_vertical_video(duration_seconds)
+        ):
+            return self.vertical_video_width, self.vertical_video_height
+        return self.video_width, self.video_height
 
     def ensure_directories(self) -> None:
         """Create necessary directories if they do not exist."""

@@ -1131,3 +1131,256 @@ async def test_full_animation_pipeline_concurrent_narration_and_animation(
     assert updated is not None
     assert updated.state == WorkflowState.COMPLETED
     assert updated.narration_storyboard is not None
+
+
+@pytest.mark.asyncio
+async def test_telegram_bot_get_project_video_duration(mock_settings, memory_db):
+    """Test TelegramBotService._get_project_video_duration precedence."""
+    bot_service = TelegramBotService(settings=mock_settings, db=memory_db)
+
+    # 1. Fallback to settings default (5 mins = 300s)
+    session = await memory_db.create_project(
+        user_id=1, chat_id=2, topic="Quantum Computing"
+    )
+    assert bot_service._get_project_video_duration(session) == 300.0
+
+    # 2. Parsed from topic text
+    session_topic = await memory_db.create_project(
+        user_id=1, chat_id=2, topic="Quantum Computing (2 min video)"
+    )
+    assert bot_service._get_project_video_duration(session_topic) == 120.0
+
+    session_sec = await memory_db.create_project(
+        user_id=1, chat_id=2, topic="Black holes in 45 seconds"
+    )
+    assert bot_service._get_project_video_duration(session_sec) == 45.0
+
+    # 3. Parsed from script scenes
+    from core.models import Script, ScriptScene
+
+    script = Script(
+        topic="General Relativity",
+        summary="A brief overview",
+        scenes=[
+            ScriptScene(
+                scene_number=1,
+                title="S1",
+                summary="Sum1",
+                description="Desc1",
+                duration_seconds=40,
+                narration="Intro",
+            ),
+            ScriptScene(
+                scene_number=2,
+                title="S2",
+                summary="Sum2",
+                description="Desc2",
+                duration_seconds=50,
+                narration="Climax",
+            ),
+        ],
+    )
+    session.script = script
+    assert bot_service._get_project_video_duration(session) == 90.0
+
+    # 4. Narration storyboard total duration takes highest precedence
+    from core.models import NarrationPlan, NarrationStoryboard
+
+    session.narration_storyboard = NarrationStoryboard(
+        topic="General Relativity",
+        plan=NarrationPlan(
+            audio_profile_name="Doc",
+            audio_profile_role="Narrator",
+            scene_environment="Studio",
+            directors_notes="Clear",
+            sample_context="Start",
+        ),
+        total_duration_seconds=88.5,
+    )
+    assert bot_service._get_project_video_duration(session) == 88.5
+
+
+@pytest.mark.asyncio
+async def test_telegram_bot_run_style_pipeline_vertical_format(
+    mock_settings,
+    memory_db,
+    sample_research_report,
+    sample_animation_style,
+    sample_scene_animation,
+):
+    """Test that videos with duration <= 2 min generate vertical 720x1280 assets during styling."""
+    bot_service = TelegramBotService(settings=mock_settings, db=memory_db)
+    bot_service.planner.plan_style = AsyncMock(return_value=sample_animation_style)
+    bot_service.animator.animate_scene = AsyncMock(return_value=sample_scene_animation)
+
+    async def mock_render_frame(html_content, output_image_path, **kwargs):
+        output_image_path.parent.mkdir(parents=True, exist_ok=True)
+        output_image_path.write_bytes(b"\x89PNG\r\n\x1a\nFakePng")
+        return output_image_path
+
+    bot_service.renderer.render_sample_frame = AsyncMock(side_effect=mock_render_frame)
+
+    mock_app = MagicMock()
+    mock_app.bot.send_photo = AsyncMock()
+    mock_app.bot.send_message = AsyncMock()
+    bot_service.app = mock_app
+
+    from core.models import Script, ScriptScene
+
+    short_script = Script(
+        topic="Quantum in 60s",
+        summary="A 60-second short video",
+        scenes=[
+            ScriptScene(
+                scene_number=1,
+                title="Intro",
+                summary="Hook",
+                description="Metaphor",
+                duration_seconds=30,
+                narration="Look at quantum physics in 60 seconds.",
+            ),
+            ScriptScene(
+                scene_number=2,
+                title="Takeaway",
+                summary="Outro",
+                description="Climax",
+                duration_seconds=30,
+                narration="And that's superposition.",
+            ),
+        ],
+    )
+
+    session = await memory_db.create_project(
+        user_id=123, chat_id=456, topic="Quantum in 60s"
+    )
+    await memory_db.save_research_report(session.project_id, sample_research_report)
+    await memory_db.save_script(session.project_id, short_script)
+
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.RESEARCHING
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.AWAITING_RESEARCH_APPROVAL
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.SCRIPTING
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.AWAITING_SCRIPT_APPROVAL
+    )
+
+    await bot_service._run_style_pipeline(session.project_id)
+
+    assert bot_service.animator.animate_scene.call_count == 1
+    anim_kwargs = bot_service.animator.animate_scene.call_args[1]
+    assert anim_kwargs["is_vertical"] is True
+    assert anim_kwargs["width"] == 720
+    assert anim_kwargs["height"] == 1280
+
+    assert bot_service.renderer.render_sample_frame.call_count == 1
+    render_kwargs = bot_service.renderer.render_sample_frame.call_args[1]
+    assert render_kwargs["width"] == 720
+    assert render_kwargs["height"] == 1280
+
+    assert mock_app.bot.send_photo.call_count == 1
+    photo_caption = mock_app.bot.send_photo.call_args[1]["caption"]
+    assert "Vertical 9:16 (720x1280 • YouTube Shorts style)" in photo_caption
+
+
+@pytest.mark.asyncio
+async def test_telegram_bot_run_full_pipeline_vertical_format(
+    mock_settings,
+    memory_db,
+    sample_research_report,
+    sample_animation_style,
+    sample_storyboard,
+):
+    """Test that full pipeline for <= 2 min video renders and sends vertical 720x1280 video."""
+    bot_service = TelegramBotService(settings=mock_settings, db=memory_db)
+    bot_service.animator.animate_storyboard = AsyncMock(return_value=sample_storyboard)
+
+    async def mock_render_video(html_content, output_video_path, **kwargs):
+        output_video_path.parent.mkdir(parents=True, exist_ok=True)
+        output_video_path.write_bytes(b"FakeSceneBytes")
+        return output_video_path
+
+    async def mock_assemble(scene_video_paths, output_video_path, *args, **kwargs):
+        output_video_path.parent.mkdir(parents=True, exist_ok=True)
+        output_video_path.write_bytes(b"FakeMasterVideoBytes")
+        return output_video_path
+
+    bot_service.renderer.render_scene_video = AsyncMock(side_effect=mock_render_video)
+    bot_service.renderer.assemble_video = AsyncMock(side_effect=mock_assemble)
+    bot_service.renderer.get_media_duration = AsyncMock(return_value=60.0)
+
+    mock_app = MagicMock()
+    mock_app.bot.send_video = AsyncMock()
+    mock_app.bot.send_message = AsyncMock()
+    bot_service.app = mock_app
+
+    from core.models import Script, ScriptScene
+
+    short_script = Script(
+        topic="Quick Quantum (1 min)",
+        summary="Short",
+        scenes=[
+            ScriptScene(
+                scene_number=1,
+                title="S1",
+                summary="Sum",
+                description="Desc",
+                duration_seconds=30,
+                narration="Narr 1",
+            ),
+            ScriptScene(
+                scene_number=2,
+                title="S2",
+                summary="Sum",
+                description="Desc",
+                duration_seconds=30,
+                narration="Narr 2",
+            ),
+        ],
+    )
+
+    session = await memory_db.create_project(
+        user_id=123, chat_id=456, topic="Quick Quantum (1 min)"
+    )
+    await memory_db.save_research_report(session.project_id, sample_research_report)
+    await memory_db.save_script(session.project_id, short_script)
+    await memory_db.save_style(session.project_id, sample_animation_style)
+
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.RESEARCHING
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.AWAITING_RESEARCH_APPROVAL
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.SCRIPTING
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.AWAITING_SCRIPT_APPROVAL
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.STYLING
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.AWAITING_STYLE_APPROVAL
+    )
+
+    await bot_service._run_full_animation_pipeline(session.project_id)
+
+    # Check animate_storyboard called with vertical parameters
+    assert bot_service.animator.animate_storyboard.call_count == 1
+    storyboard_kwargs = bot_service.animator.animate_storyboard.call_args[1]
+    assert storyboard_kwargs["is_vertical"] is True
+    assert storyboard_kwargs["width"] == 720
+    assert storyboard_kwargs["height"] == 1280
+
+    # Check send_video called with vertical dimensions and badge
+    assert mock_app.bot.send_video.call_count == 1
+    send_video_kwargs = mock_app.bot.send_video.call_args[1]
+    assert send_video_kwargs["width"] == 720
+    assert send_video_kwargs["height"] == 1280
+    assert "Vertical 9:16 (720x1280 • Shorts)" in send_video_kwargs["caption"]

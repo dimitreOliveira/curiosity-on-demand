@@ -66,14 +66,15 @@ class AnimatorAgent(BaseAgent):
 
         return style, scene_1_anim
 
-    async def generate_scene_animation(
+    async def animate_scene(
         self,
         topic: str,
         scene: ScriptScene,
         style: AnimationStyle,
-        duration_seconds: int | None = None,
+        duration_seconds: float | None = None,
+        **kwargs,
     ) -> SceneAnimation:
-        """Generate standalone HTML/SVG/Canvas animation code for an individual scene."""
+        """Generate animations for a single scene using SceneAnimatorAgent."""
         from core.cost_tracker import (
             PipelineComponent,
             current_project_id,
@@ -87,6 +88,7 @@ class AnimatorAgent(BaseAgent):
                 scene=scene,
                 style=style,
                 duration_seconds=duration_seconds,
+                **kwargs,
             )
 
     async def generate_full_storyboard(
@@ -96,6 +98,7 @@ class AnimatorAgent(BaseAgent):
         style: AnimationStyle,
         sample_scene_1: SceneAnimation | None = None,
         default_duration: int | None = None,
+        **kwargs,
     ) -> AnimationStoryboard:
         """Generate animations for all scenes using SceneAnimatorAgent in parallel."""
         from core.cost_tracker import (
@@ -112,6 +115,7 @@ class AnimatorAgent(BaseAgent):
                 style=style,
                 sample_scene_1=sample_scene_1,
                 default_duration=default_duration,
+                **kwargs,
             )
 
 
