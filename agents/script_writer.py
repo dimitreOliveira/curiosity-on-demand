@@ -85,7 +85,7 @@ Your principles:
      * description: Rich, cinematic visual choreography. Specify:
        - Focal Entities & Rigging: Specific actors, diagrams, machines, or metaphors and how their components move (e.g., oscillating limbs, rotating gears, pulsing energy fields).
        - Environment & Lighting: Depth layers, background gradients, light beam sources, and color shifts.
-       - Dynamic Action & Climax: Motion trajectories, particle bursts, screen shakes, or metric callouts that trigger at key moments in the scene.
+       - Dynamic Action & Climax: Motion trajectories, particle bursts, screen shakes, cinematic title reveals, or illustrative transformations that trigger at key moments in the scene.
      * duration_seconds: Integer estimated duration for this scene in seconds based on narration length and total target duration (budgeted at 15–25s per scene).
      * narration: The exact, conversational, punchy voiceover script to be spoken aloud. Provide sufficient narration depth to fill the scene's duration.
 3. Tone & Cadence:

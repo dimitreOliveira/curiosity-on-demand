@@ -116,7 +116,7 @@ class AnimationStyle(BaseModel):
     """Visual theme and design aesthetic chosen for video animations."""
 
     style_name: str = Field(
-        description="Descriptive name of the visual style (e.g. 'Minimalist Vector Blueprint', 'Dark Neon Cybernetic', 'Vibrant Flat Infographic')"
+        description="Descriptive name of the visual style (e.g. 'Warm Editorial Vector Illustration', 'Vibrant Flat Motion Graphics', 'Minimalist Luminous Storybook', 'Dynamic Kinetic Collage', 'Atmospheric 2D Cinematic')"
     )
     visual_description: str = Field(
         description="Detailed description of visual aesthetics, composition, lighting, backgrounds, and art direction"
@@ -127,10 +127,14 @@ class AnimationStyle(BaseModel):
     )
     font_family: str = Field(
         default="Inter, sans-serif",
-        description="Typography and font stack for on-screen titles, equations, and annotations",
+        description="Typography and font stack for on-screen titles and diagram callouts (e.g. 'Inter, sans-serif', 'Cinzel, Georgia, serif', 'Outfit, sans-serif')",
     )
     animation_guidelines: str = Field(
         description="Principles and motion design guidelines for SVG and Canvas animations in this style"
+    )
+    background_tone: str = Field(
+        default="warm",
+        description="Overall background mood and brightness direction for the visual style (e.g., 'warm parchment', 'cool dark atmospheric', 'soft pastel', 'vibrant saturated', 'clean white studio', 'deep oceanic', 'sunset gradient'). Guides whether scene animations use dark, light, warm, or colored backgrounds.",
     )
 
 

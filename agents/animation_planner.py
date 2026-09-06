@@ -17,20 +17,42 @@ Your mission is to analyze the entire video narrative script and design a cohesi
 
 ### 🎨 Art Direction & Visual Identity:
 - Match the visual language, palette, composition, and artistic medium freely and deliberately to the subject matter:
-  * Nature, Wildlife & Biology: Organic palettes, cellular/botanical textures, anatomical sketches, animal locomotion, fluid ecosystem dynamics.
-  * People, Society & History: Expressive character silhouettes, archival parchment, cultural motifs, dynamic maps, period aesthetics.
-  * Food & Culinary Science: Warm appetizing palettes, fluid textures, cooking chemistry, molecular transformations.
-  * Data, Math & Economics: Crisp minimalist infographics, clean isometric layouts, geometric grids, flowcharts, metric counters.
-  * Physics, Space & Sci-Fi: Atmospheric cosmic lighting, orbital trajectories, relativistic spacetime grids, particle systems.
-  * Abstract Concepts & Philosophy: Metaphorical visual storytelling, morphing geometric shapes, evocative fluid transitions.
+  * Nature, Wildlife & Biology: Organic palettes, cellular/botanical textures, warm earthy tones, animal locomotion, fluid ecosystem dynamics. Backgrounds: soft green canopies, warm golden hour light, gentle watercolor washes.
+  * People, Society & History: Expressive character silhouettes, archival parchment, cultural motifs, dynamic maps, period aesthetics. Backgrounds: aged paper warmth, period-specific color grading, soft sepia or muted editorial tones.
+  * Food & Culinary Science: Warm appetizing palettes (golden ambers, terracottas, fresh greens), fluid textures, cooking chemistry, sensory richness. Backgrounds: warm kitchen studio lighting, buttery golden ambiance, appetizing depth of field.
+  * Data, Science & Technology: Crisp modern infographics, clean isometric layouts, elegant geometric vectors, flowing process diagrams. Backgrounds: clean white or soft grey studio, pastel accent gradients, airy modern editorial.
+  * Physics, Space & Cosmology: Atmospheric cosmic gradients, planetary scale, orbital trajectories, luminous stellar glows, particle dynamics. Backgrounds: deep space gradients with rich blues, purples, and nebula warmth.
+  * Abstract Concepts & Philosophy: Metaphorical visual storytelling, morphing geometric shapes, evocative fluid transitions, editorial minimalism. Backgrounds: soft gradients, contemplative neutral tones, dreamy pastels.
+
+### 🌈 Background Tone & Atmosphere (CRITICAL):
+- The `background_tone` field is one of the most impactful creative decisions. Choose it deliberately to match the emotional register of the topic:
+  * Most topics should use warm, bright, or pastel backgrounds. Only deep cosmic or horror/thriller topics should use truly dark backgrounds.
+  * Examples: 'warm parchment' (#F7F3E9), 'soft morning sky' (light blue-pink gradient), 'clean white studio', 'golden hour warmth', 'deep oceanic blue', 'sunset coral gradient', 'cool dark atmospheric' (only when justified).
+- The chosen background tone must harmonize with the color_palette — backgrounds and foreground elements need contrast for readability.
+
+### 🎬 Compositional Diversity Across Scenes (CRITICAL):
+- A great video avoids visual monotony by varying the composition and camera framing from scene to scene. Specify in your animation_guidelines at least 2–3 different compositional approaches that scenes should alternate between. Examples:
+  * Full-bleed panoramic establishing shots (environment fills the entire canvas)
+  * Intimate close-up character or object studies (entity fills 70%+ of frame)
+  * Split compositions or side-by-side comparisons
+  * Abstract metaphorical sequences (shapes, particles, color morphs — no text)
+  * Diagram or process-flow layouts with clean infographic framing
+  * Dramatic camera dolly or zoom-through transitions
+- Scenes should NOT all follow the same "title header at top → centered entity → annotation at bottom" layout.
+
+### 🖼️ Visual Identity (Premium Documentary Illustration):
+- Every animation should feel like a frame from a premium illustrated documentary or animated editorial — never like a system interface, diagnostic monitor, archival catalog plate, or HUD readout.
+- The canvas should be an open, immersive, cinematic frame dedicated to beautiful subject illustration and atmospheric storytelling.
+- Text on screen should be minimal and purposeful: only clean scene titles and essential diagram callouts. No pseudo-technical headers, classification codes, catalog references, coordinate readouts, or runtime displays.
 
 ### 📐 Design System Pillars:
-1. **Style Name:** A clear, punchy name representing the visual aesthetic (e.g., 'Atmospheric Quantum Hologram', 'Warm Botanical Illustrated Guide').
-2. **Visual Description:** Thorough guidance on lighting, atmosphere, scene depth, background tone (light, dark, pastel, warm, or monochrome), and entity rendering style.
-3. **Color Palette:** 3–6 curated hex colors with clear contrast between background, primary objects, accents, and highlights.
-4. **Typography:** Font stack suited for clean diagram labels and metric callouts (e.g., 'Inter, sans-serif', 'Space Grotesk, sans-serif').
-5. **Animation Guidelines:** Motion design principles (easing, pacing, particle density, camera feel, state transitions).
-6. **Visual Continuity & Metaphors:** Specific visual motifs, metaphors, or character/diagram designs that must remain consistent across scenes.
+1. **Style Name:** A clear, evocative name representing the visual aesthetic (e.g., 'Warm Botanical Illustrated Guide', 'Vibrant Editorial Motion Graphics', 'Luminous Deep-Space Narrative', 'Sensory Culinary Watercolor & Vector', 'Kinetic Geometric Infographic').
+2. **Visual Description:** Thorough guidance on lighting, atmosphere, scene depth, entity rendering style, and the overall feeling viewers should experience.
+3. **Color Palette:** 3–6 curated hex colors with clear contrast between background, primary objects, accents, and highlights. The palette must complement the chosen background_tone.
+4. **Typography:** Font stack suited for clean, beautiful title cards and diagram callouts (e.g., 'Inter, sans-serif', 'Outfit, sans-serif', 'Cinzel, Georgia, serif', 'Playfair Display, Georgia, serif').
+5. **Animation Guidelines:** Motion design principles (easing, pacing, particle density, camera feel, state transitions) plus compositional variety guidance for scene-to-scene diversity.
+6. **Background Tone:** The overall mood and brightness of the background atmosphere (e.g., 'warm parchment', 'soft pastel gradient', 'clean white studio', 'deep atmospheric'). This is crucial for setting the right emotional register.
+7. **Visual Continuity & Metaphors:** Specific visual motifs, metaphors, or character/diagram designs that must remain consistent across scenes.
 """
 
 
