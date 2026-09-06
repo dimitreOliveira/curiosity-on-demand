@@ -86,7 +86,7 @@ Every generated canvas animation MUST incorporate the following 8 structural pil
 
 ### ⚙️ Output Format & Standards:
 - Return ONLY the complete, self-contained, valid HTML document (`<!DOCTYPE html><html><head>...<style>...</style></head><body><canvas id="stage"></canvas><script>...</script></body></html>`).
-- Resolution: Standard 16:9 widescreen `1280x720` canvas with responsive CSS (`width: 100%; height: 100%; object-fit: contain; margin: 0; overflow: hidden; background: ...`).
+- Resolution & Canvas: Responsive HTML5 Canvas configured for target dimensions (Standard 16:9 widescreen `1280x720` or Vertical 9:16 portrait `720x1280` for short-form video) with responsive CSS (`width: 100%; height: 100%; object-fit: contain; margin: 0; overflow: hidden; background: ...`).
 - Pure Vanilla Web Technologies (Canvas 2D/WebGL, SVG, Vanilla JS). NO external CDNs or external script tags.
 """
 
@@ -134,6 +134,10 @@ class SceneAnimatorAgent(BaseAgent):
         scene: ScriptScene,
         style: AnimationStyle,
         duration_seconds: float | None = None,
+        width: int | None = None,
+        height: int | None = None,
+        is_vertical: bool | None = None,
+        total_video_duration: float | None = None,
     ) -> SceneAnimation:
         """Generate standalone HTML5 Canvas animation code for an individual scene unconstrained by JSON schema."""
         target_duration = round(
@@ -144,17 +148,50 @@ class SceneAnimatorAgent(BaseAgent):
             ),
             2,
         )
+
+        # Resolve video format and canvas dimensions
+        if width is not None and height is not None:
+            w, h = width, height
+            vertical = is_vertical if is_vertical is not None else (w < h)
+        elif is_vertical is not None:
+            vertical = is_vertical
+            w, h = self.settings.get_video_dimensions(is_vertical=vertical)
+        elif total_video_duration is not None and total_video_duration > 0:
+            vertical = self.settings.is_vertical_video(total_video_duration)
+            w, h = self.settings.get_video_dimensions(
+                duration_seconds=total_video_duration
+            )
+        else:
+            vertical = False
+            w, h = self.settings.video_width, self.settings.video_height
+
         logger.info(
-            "Generating animation code for Scene %d ('%s', %.2fs) in style '%s'",
+            "Generating animation code for Scene %d ('%s', %.2fs, %dx%d %s) in style '%s'",
             scene.scene_number,
             scene.title,
             target_duration,
+            w,
+            h,
+            "vertical" if vertical else "horizontal",
             style.style_name,
         )
 
         palette_str = (
             ", ".join(style.color_palette) if style.color_palette else "Theme Default"
         )
+
+        if vertical:
+            format_spec = (
+                f"- Canvas Dimensions: {w}x{h} (9:16 Vertical Portrait format, YouTube Shorts / Reels style)\n"
+                f"- Framing & Composition: Center diagram elements, typography, and motion vertically. "
+                f"Design specifically for a mobile vertical viewport ({w}px width by {h}px height), ensuring visual hierarchy stacks cleanly."
+            )
+        else:
+            format_spec = (
+                f"- Canvas Dimensions: {w}x{h} (16:9 Horizontal Widescreen format)\n"
+                f"- Framing & Composition: Compose elements across the standard widescreen canvas ({w}px width by {h}px height)."
+            )
+
         prompt = (
             f"Topic: {topic}\n\n"
             f"Visual Design System:\n"
@@ -169,9 +206,10 @@ class SceneAnimatorAgent(BaseAgent):
             f"- Concept Summary: {scene.summary}\n"
             f"- Visual Description: {scene.description}\n"
             f"- Spoken Narration (for pacing/context only): {scene.narration}\n"
-            f"- Playback Duration: {target_duration:.2f} seconds (timed to match voiceover narration)\n\n"
+            f"- Playback Duration: {target_duration:.2f} seconds (timed to match voiceover narration)\n"
+            f"{format_spec}\n\n"
             f"Instructions:\n"
-            f"Generate the complete, standalone, high-fidelity HTML5 Canvas animation for this scene. "
+            f"Generate the complete, standalone, high-fidelity HTML5 Canvas animation for this scene formatted for {w}x{h} ({'vertical 9:16' if vertical else 'horizontal 16:9'}). "
             f"Strictly reflect the chosen visual style and color palette. "
             f"Implement procedural entity rigging, multi-layer volumetric lighting, physics kinematics, "
             f"dynamic 2D virtual camera movements (dolly/zoom/pan), multi-act visual phase progression "
@@ -206,6 +244,10 @@ class SceneAnimatorAgent(BaseAgent):
         scene_durations: dict[int, float] | None = None,
         narration_storyboard: NarrationStoryboard | None = None,
         concurrency: int | None = None,
+        width: int | None = None,
+        height: int | None = None,
+        is_vertical: bool | None = None,
+        total_video_duration: float | None = None,
     ) -> AnimationStoryboard:
         """Generate animations for all scenes in parallel using native animation durations.
 
@@ -214,10 +256,44 @@ class SceneAnimatorAgent(BaseAgent):
         to perfectly match the narration audio duration with zero frozen frames.
         """
         max_concurrency = concurrency or self.DEFAULT_CONCURRENCY
+
+        # Resolve total video duration to determine format if not explicitly supplied
+        total_dur = total_video_duration or 0.0
+        if total_dur <= 0:
+            if narration_storyboard and narration_storyboard.total_duration_seconds > 0:
+                total_dur = narration_storyboard.total_duration_seconds
+            elif script and script.scenes:
+                total_dur = sum(s.duration_seconds for s in script.scenes)
+
+        if width is not None and height is not None:
+            resolved_w, resolved_h = width, height
+            resolved_vertical = (
+                is_vertical if is_vertical is not None else (resolved_w < resolved_h)
+            )
+        elif is_vertical is not None:
+            resolved_vertical = is_vertical
+            resolved_w, resolved_h = self.settings.get_video_dimensions(
+                is_vertical=resolved_vertical
+            )
+        elif total_dur > 0:
+            resolved_vertical = self.settings.is_vertical_video(total_dur)
+            resolved_w, resolved_h = self.settings.get_video_dimensions(
+                duration_seconds=total_dur
+            )
+        else:
+            resolved_vertical = False
+            resolved_w, resolved_h = (
+                self.settings.video_width,
+                self.settings.video_height,
+            )
+
         logger.info(
-            "Generating storyboard (%d scenes, concurrency=%d) for topic '%s' in style '%s'",
+            "Generating storyboard (%d scenes, concurrency=%d, %dx%d %s) for topic '%s' in style '%s'",
             len(script.scenes),
             max_concurrency,
+            resolved_w,
+            resolved_h,
+            "vertical" if resolved_vertical else "horizontal",
             topic,
             style.style_name,
         )
@@ -245,6 +321,10 @@ class SceneAnimatorAgent(BaseAgent):
                     scene=scene,
                     style=style,
                     duration_seconds=native_duration,
+                    width=resolved_w,
+                    height=resolved_h,
+                    is_vertical=resolved_vertical,
+                    total_video_duration=total_dur,
                 )
 
         tasks = [_animate_with_sem(scene) for scene in script.scenes]

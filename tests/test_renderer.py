@@ -501,3 +501,80 @@ async def test_renderer_assemble_video_parallel_muxing(mock_settings, tmp_path):
         assert result == out_mp4
         assert out_mp4.exists()
         assert renderer.mux_scene_audio_video.call_count == 3
+
+
+@pytest.mark.asyncio
+async def test_renderer_render_sample_frame_vertical(mock_settings, tmp_path):
+    """Test render_sample_frame with vertical dimensions (720x1280)."""
+    renderer = AnimationRenderer(settings=mock_settings)
+    out_img = tmp_path / "renders" / "sample_vertical.png"
+
+    mock_page = AsyncMock()
+    mock_browser = AsyncMock()
+    mock_browser.new_page.return_value = mock_page
+    mock_playwright = AsyncMock()
+    mock_playwright.chromium.launch.return_value = mock_browser
+
+    async def mock_screenshot(path, **kwargs):
+        p = Path(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(b"\x89PNG\r\n\x1a\nFakePngData")
+
+    mock_page.screenshot.side_effect = mock_screenshot
+
+    with patch("services.renderer.async_playwright") as mock_ap:
+        mock_cm = AsyncMock()
+        mock_cm.__aenter__.return_value = mock_playwright
+        mock_cm.__aexit__.return_value = None
+        mock_ap.return_value = mock_cm
+
+        res = await renderer.render_sample_frame(
+            html_content="<html><body>Test Vertical</body></html>",
+            output_image_path=out_img,
+            width=720,
+            height=1280,
+        )
+
+        assert res == out_img
+        assert out_img.exists()
+        # Check viewport width and height passed to browser.new_page
+        mock_browser.new_page.assert_called_once_with(
+            viewport={"width": 720, "height": 1280},
+            device_scale_factor=1,
+        )
+
+
+@pytest.mark.asyncio
+async def test_renderer_render_scenes_parallel_with_custom_dimensions(
+    mock_settings, tmp_path, sample_scene_animation
+):
+    """Test render_scenes_parallel forwards vertical dimensions (720x1280) to render_scene_video."""
+    renderer = AnimationRenderer(settings=mock_settings)
+    out_dir = tmp_path / "renders_vertical"
+
+    scene_2 = sample_scene_animation.model_copy(
+        update={"scene_number": 2, "duration_seconds": 15}
+    )
+
+    async def mock_render_video(
+        html_content, output_video_path, duration_seconds, width, height, **kwargs
+    ):
+        output_video_path.parent.mkdir(parents=True, exist_ok=True)
+        output_video_path.write_bytes(f"FakeScene_{width}x{height}".encode())
+        return output_video_path
+
+    renderer.render_scene_video = AsyncMock(side_effect=mock_render_video)
+
+    paths = await renderer.render_scenes_parallel(
+        scenes=[sample_scene_animation, scene_2],
+        output_dir=out_dir,
+        concurrency=2,
+        width=720,
+        height=1280,
+    )
+
+    assert len(paths) == 2
+    assert renderer.render_scene_video.call_count == 2
+    call_kwargs_1 = renderer.render_scene_video.call_args_list[0][1]
+    assert call_kwargs_1["width"] == 720
+    assert call_kwargs_1["height"] == 1280

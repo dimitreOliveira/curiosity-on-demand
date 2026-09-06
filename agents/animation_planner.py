@@ -47,12 +47,30 @@ class AnimationPlannerAgent(BaseAgent):
         script: Script,
         feedback: str | None = None,
         previous_style: AnimationStyle | None = None,
+        is_vertical: bool | None = None,
     ) -> AnimationStyle:
         """Analyze script, formulate best-fitting visual design system, and handle revisions."""
         logger.info(
             "Planning animation visual style for topic '%s' (Guided feedback: %s)",
             topic,
             bool(feedback),
+        )
+
+        total_dur = (
+            sum(s.duration_seconds for s in script.scenes)
+            if script and script.scenes
+            else 0
+        )
+        vertical = (
+            is_vertical
+            if is_vertical is not None
+            else self.settings.is_vertical_video(total_dur)
+        )
+        format_info = (
+            "Target Format: 9:16 Vertical Portrait (YouTube Shorts / mobile video format). "
+            "Prioritize vertical visual balance, vertically stacked diagram layouts, and mobile-optimized contrast."
+            if vertical
+            else "Target Format: 16:9 Horizontal Widescreen."
         )
 
         scenes_summary = "\n".join(
@@ -65,6 +83,7 @@ class AnimationPlannerAgent(BaseAgent):
 
         base_context = (
             f"Topic: {topic}\n"
+            f"Format: {format_info}\n"
             f"Script Overview: {script.summary}\n\n"
             f"All Script Scenes:\n{scenes_summary}"
         )

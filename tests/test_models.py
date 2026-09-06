@@ -216,3 +216,36 @@ def test_project_session_project_folder():
         project_folder="custom_folder_name",
     )
     assert custom_session.project_folder == "custom_folder_name"
+
+
+def test_settings_vertical_video_resolution(mock_settings):
+    """Test Settings.is_vertical_video and Settings.get_video_dimensions."""
+    # Duration <= 120s should trigger vertical (YouTube Shorts style)
+    assert mock_settings.is_vertical_video(30.0) is True
+    assert mock_settings.is_vertical_video(60.0) is True
+    assert mock_settings.is_vertical_video(120.0) is True
+    assert mock_settings.get_video_dimensions(duration_seconds=60.0) == (720, 1280)
+    assert mock_settings.get_video_dimensions(duration_seconds=120.0) == (720, 1280)
+
+    # Duration > 120s should use standard horizontal widescreen
+    assert mock_settings.is_vertical_video(120.1) is False
+    assert mock_settings.is_vertical_video(300.0) is False
+    assert mock_settings.get_video_dimensions(duration_seconds=121.0) == (1280, 720)
+    assert mock_settings.get_video_dimensions(duration_seconds=300.0) == (1280, 720)
+
+    # Non-positive or None duration should fallback to horizontal defaults
+    assert mock_settings.is_vertical_video(0.0) is False
+    assert mock_settings.is_vertical_video(-10.0) is False
+    assert mock_settings.is_vertical_video(None) is False
+    assert mock_settings.get_video_dimensions(duration_seconds=0.0) == (1280, 720)
+    assert mock_settings.get_video_dimensions(duration_seconds=None) == (1280, 720)
+
+    # Explicit is_vertical flag overrides duration
+    assert mock_settings.get_video_dimensions(is_vertical=True) == (720, 1280)
+    assert mock_settings.get_video_dimensions(is_vertical=False) == (1280, 720)
+    assert mock_settings.get_video_dimensions(
+        duration_seconds=600.0, is_vertical=True
+    ) == (720, 1280)
+    assert mock_settings.get_video_dimensions(
+        duration_seconds=30.0, is_vertical=False
+    ) == (1280, 720)
