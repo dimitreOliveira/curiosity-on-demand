@@ -105,7 +105,7 @@ Curiosity On Demand is an automated educational video research, scripting, narra
 ## Tech Stack
 
 - **Language & Runtime:** Python 3.12+, AsyncIO
-- **AI & LLM Grounding:** Google GenAI SDK (`google-genai` 2.0+) using `gemini-3.7-flash` with native Google Search tool and structured JSON schemas
+- **AI & LLM Grounding:** Google GenAI SDK (`google-genai` 2.0+) using `gemini-3.7-flash` / `gemini-3.8-flash` with native Google Search tool and structured JSON schemas
 - **Voiceover Speech Generation:** Gemini TTS (`gemini-3.1-flash-tts-preview`) with natural-language directorial prompts and inline emotional audio tags
 - **Animation & Rendering:** Playwright (Headless Chromium for SVG + HTML5 Canvas execution) and `imageio-ffmpeg` for MP4 video assembly and audio multiplexing
 - **YouTube Publishing:** Google YouTube Data API v3 (`google-api-python-client`, `google-auth-oauthlib`) with automatic chapter timestamps, hashtags, and Shorts format support
@@ -232,6 +232,38 @@ Curiosity On Demand includes complete Docker Compose support for headless contai
 
 > [!NOTE]
 > The `./storage` directory is mounted into the container as `/app/storage`. Your SQLite database (`storage/curiosity.db`), rendered video outputs, and YouTube authorization tokens (`storage/youtube_token.json`) persist across container rebuilds and restarts.
+
+---
+
+## Telegram Bot Guide & Workflow
+
+### 1. Bot Commands
+The bot registers native command auto-completion with Telegram:
+- `/start` — Welcome message and comprehensive pipeline overview.
+- `/help` — Complete guide explaining duration syntax, aspect ratios, and review stages.
+- `/status` — Real-time active project tracking (stage, topic, project ID, last update).
+- `/cancel` — Cancel the active project workflow.
+
+### 2. Starting a Project & Duration Syntax
+Send any curiosity or educational topic directly to the bot in Telegram:
+- **Default Duration:** If no duration is specified, the default duration from settings (5 minutes) is used.
+- **Specifying Duration:** Include duration tags in your topic, such as `How do black holes evaporate? (2 min short)` or `Quantum computing explained (5 min)`.
+- **Automatic Aspect Ratio (Shorts vs Widescreen):**
+  - **Vertical 9:16 (YouTube Shorts):** Videos with duration &le; 2 minutes (120 seconds) are automatically styled, coded, and rendered in vertical 9:16 resolution (`720x1280`).
+  - **Horizontal 16:9 (Standard Video):** Videos longer than 2 minutes are rendered in horizontal 16:9 widescreen (`1280x720`).
+
+### 3. Human-in-the-Loop Review Stages
+Curiosity On Demand gives you full creative control at every milestone. Tap **Approve** to advance to the next stage, or reply with feedback to refine:
+1. **Research Findings Review:** Inspect grounded facts, key concepts, sources, and narrative angles gathered via Google Search.
+2. **Narration Script Review:** Review the scene breakdown, spoken narration, visual directions, and estimated timings.
+3. **Voice Direction & Preview:** Listen to an inline audio voice sample synthesized with Gemini TTS. Request tone or voice talent adjustments if desired.
+4. **Visual Style Frame Preview:** Review a high-resolution rendered frame snapshot and color palette of Scene 1. Request animation style adjustments before batch rendering.
+5. **Video Preview & YouTube Publishing:** Review the final rendered MP4 video preview alongside a granular token, query, duration, and USD cost breakdown. Tap **Publish to YouTube** to upload directly as a video or Short.
+
+### 4. Startup Diagnostics & Access Control
+- **Pre-Flight Validation:** Upon launch, the system validates that mandatory credentials (`GEMINI_API_KEY` and `TELEGRAM_BOT_TOKEN`) are configured.
+- **Diagnostic Logging:** Startup logs report detected model configurations, FFmpeg binary paths, YouTube publishing readiness, and access control restrictions.
+- **Access Control:** Restrict bot usage by adding authorized user IDs or usernames to `TELEGRAM_ALLOWED_USERS` in `.env` (leave blank to allow all users).
 
 ---
 

@@ -200,7 +200,7 @@ class TelegramBotService:
     async def _handle_start(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
-        """Handle /start command."""
+        """Handle /start command, sending a welcoming overview of the pipeline to authorized users."""
         if not update.effective_user or not update.effective_chat:
             return
         if not self._is_user_authorized(
@@ -223,7 +223,7 @@ class TelegramBotService:
             "7. 🚀 *YouTube Publishing:* One-click publish to your YouTube channel as video or Shorts.\n\n"
             "👉 *Send a topic to get started!*\n"
             "_(e.g. `How do black holes evaporate? (2 min short)` or `Quantum computing explained (5 min)`)_\n\n"
-            "💡 _Tip: Videos ≤ 2 minutes automatically generate in vertical 9:16 format for YouTube Shorts!_"
+            "💡 _Tip: Videos ≤ 2 minutes are automatically generated in vertical 9:16 format for YouTube Shorts!_"
         )
         await update.effective_chat.send_message(
             welcome_text, parse_mode=ParseMode.MARKDOWN
@@ -232,7 +232,7 @@ class TelegramBotService:
     async def _handle_help(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
-        """Handle /help command."""
+        """Handle /help command, providing comprehensive usage instructions and workflow guidance."""
         if not update.effective_chat:
             return
         help_text = (
@@ -247,6 +247,7 @@ class TelegramBotService:
             "  4. *Visual style frame* — review rendered frame snapshot and color palette.\n"
             "  5. *Final video* — receive MP4 preview & publish to YouTube with one tap.\n\n"
             "*Commands:*\n"
+            "• `/start` - Show welcome message and pipeline overview.\n"
             "• `/status` - Check active project progress, stage, and resource costs.\n"
             "• `/cancel` - Cancel the current active project.\n"
             "• `/help` - Show this guide."
@@ -258,7 +259,7 @@ class TelegramBotService:
     async def _handle_status(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
-        """Handle /status command."""
+        """Handle /status command, reporting current project state, topic, and identifier."""
         if not update.effective_chat:
             return
         active_project = await self.db.get_active_project_for_chat(
@@ -282,7 +283,7 @@ class TelegramBotService:
     async def _handle_cancel(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
-        """Handle /cancel command."""
+        """Handle /cancel command, marking the active project as cancelled."""
         if not update.effective_chat:
             return
         active_project = await self.db.get_active_project_for_chat(
