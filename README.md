@@ -113,7 +113,7 @@ Curiosity On Demand is an automated educational video research, scripting, narra
 - **Data Validation & Settings:** `pydantic` v2, `pydantic-settings`
 - **Persistence & State:** SQLAlchemy 2.0 async + SQLite (`aiosqlite`)
 - **Bot Framework:** `python-telegram-bot` (v22+ async)
-- **Development Tooling:** `uv`, `pytest`, `pytest-asyncio`, `ruff`, `ty`, `codespell`
+- **Development Tooling:** `uv`, `pytest`, `pytest-asyncio`, `ruff`, `ty`, `codespell`, GitHub Actions CI
 
 
 ---
