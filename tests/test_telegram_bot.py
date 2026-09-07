@@ -1773,5 +1773,82 @@ async def test_telegram_bot_handle_help(mock_settings, memory_db):
     sent_text = mock_chat.send_message.call_args[0][0]
     assert "Curiosity On Demand - Help & Guide" in sent_text
     assert "Human-in-the-Loop Review" in sent_text
+    assert "/start" in sent_text
     assert "/status" in sent_text
     assert "/cancel" in sent_text
+
+
+@pytest.mark.asyncio
+async def test_telegram_bot_handle_status_no_project(mock_settings, memory_db):
+    """Test /status notifies user when no active project exists."""
+    bot_service = TelegramBotService(settings=mock_settings, db=memory_db)
+
+    mock_update = MagicMock(spec=Update)
+    mock_chat = AsyncMock()
+    mock_chat.id = 9999
+    mock_update.effective_chat = mock_chat
+
+    await bot_service._handle_status(mock_update, MagicMock())
+
+    mock_chat.send_message.assert_called_once()
+    sent_text = mock_chat.send_message.call_args[0][0]
+    assert "No active project found" in sent_text
+
+
+@pytest.mark.asyncio
+async def test_telegram_bot_handle_status_active_project(mock_settings, memory_db):
+    """Test /status displays current stage and details of active project."""
+    bot_service = TelegramBotService(settings=mock_settings, db=memory_db)
+    session = await memory_db.create_project(
+        user_id=123, chat_id=8888, topic="How do stars form?"
+    )
+
+    mock_update = MagicMock(spec=Update)
+    mock_chat = AsyncMock()
+    mock_chat.id = 8888
+    mock_update.effective_chat = mock_chat
+
+    await bot_service._handle_status(mock_update, MagicMock())
+
+    mock_chat.send_message.assert_called_once()
+    sent_text = mock_chat.send_message.call_args[0][0]
+    assert "Active Project Status" in sent_text
+    assert "How do stars form?" in sent_text
+    assert session.project_id[:8] in sent_text
+
+
+@pytest.mark.asyncio
+async def test_telegram_bot_handle_cancel_no_project(mock_settings, memory_db):
+    """Test /cancel notifies user when there is no active project to cancel."""
+    bot_service = TelegramBotService(settings=mock_settings, db=memory_db)
+
+    mock_update = MagicMock(spec=Update)
+    mock_chat = AsyncMock()
+    mock_chat.id = 9999
+    mock_update.effective_chat = mock_chat
+
+    await bot_service._handle_cancel(mock_update, MagicMock())
+
+    mock_chat.send_message.assert_called_once_with("No active project to cancel.")
+
+
+@pytest.mark.asyncio
+async def test_telegram_bot_handle_cancel_active_project(mock_settings, memory_db):
+    """Test /cancel transitions active project to FAILED and confirms cancellation."""
+    bot_service = TelegramBotService(settings=mock_settings, db=memory_db)
+    session = await memory_db.create_project(
+        user_id=123, chat_id=7777, topic="Black Holes (2 min)"
+    )
+
+    mock_update = MagicMock(spec=Update)
+    mock_chat = AsyncMock()
+    mock_chat.id = 7777
+    mock_update.effective_chat = mock_chat
+
+    await bot_service._handle_cancel(mock_update, MagicMock())
+
+    mock_chat.send_message.assert_called_once_with("❌ Project cancelled.")
+    updated = await memory_db.get_project(session.project_id)
+    assert updated is not None
+    assert updated.state == WorkflowState.FAILED
+    assert updated.error_message == "Cancelled by user."

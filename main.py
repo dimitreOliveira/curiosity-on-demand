@@ -35,6 +35,9 @@ logger = logging.getLogger("curiosity-on-demand")
 def validate_startup_environment(settings: Settings) -> None:
     """Validate critical environment credentials before service startup.
 
+    Args:
+        settings: Application settings containing API credentials.
+
     Raises:
         ValueError: If critical credentials such as GEMINI_API_KEY or
             TELEGRAM_BOT_TOKEN are missing.
@@ -53,7 +56,11 @@ def validate_startup_environment(settings: Settings) -> None:
 
 
 def log_startup_diagnostics(settings: Settings) -> None:
-    """Log system dependencies, tools, and configuration state at launch."""
+    """Log system dependencies, tools, and configuration state at launch.
+
+    Args:
+        settings: Application settings containing model names and credentials.
+    """
     logger.info(
         "Using Gemini Model: %s (Research: %s, TTS: %s)",
         settings.gemini_model,

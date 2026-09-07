@@ -1,19 +1,21 @@
 # Curiosity On Demand - Agent Instructions
 
 ## Project Purpose (The WHY)
-Curiosity On Demand is an automated educational video research and scripting pipeline controlled via Telegram. It takes a user-submitted topic, performs grounded web research using Gemini with Google Search Grounding to gather rich facts, context, and concepts, enables interactive human review and feedback, and generates scene-by-scene narration scripts.
+Curiosity On Demand is an automated educational video research, scripting, narration synthesis, animation, and publishing pipeline controlled via Telegram. It takes a user-submitted topic, performs grounded web research using Gemini with Google Search Grounding, enables interactive human review and feedback, generates scene-by-scene narration scripts, synthesizes natural-language voiceovers via Gemini TTS, renders dynamic HTML5 Canvas animations, assembles master MP4 videos with synchronized audio, and publishes to YouTube.
 
 ## Tech Stack & Structure (The WHAT)
 - **Language & Runtime:** Python 3.12+, AsyncIO.
-- **AI & Grounding:** Google GenAI SDK (Gemini with Google Search Grounding & Structured Outputs).
+- **AI, Grounding & Audio:** Google GenAI SDK (Gemini with Google Search Grounding, Structured Outputs, and Gemini TTS).
+- **Animation & Rendering:** Playwright (Headless Chromium Canvas/SVG execution) and FFmpeg.
+- **Publishing & Tracking:** YouTube Data API v3, granular token & USD cost tracking.
 - **Bot & Flow:** `python-telegram-bot` (v22+ async), custom state machine with SQLite/SQLAlchemy.
 - **Tooling:** `uv` for fast dependency management, Docker, `ruff`, `ty`, `codespell`.
 
 **Key Components:**
-- `main.py`: Application entrypoint running the bot.
-- `agents/`: Autonomous agents (`base.py`, `researcher.py`, `evaluator.py`, `script_writer.py`, `animation_planner.py`, `scene_animator.py`).
-- `core/`: FSM transitions (`state_machine.py`), Pydantic schemas (`models.py`), and DB models (`database.py`).
-- `services/`: Telegram bot integration (`telegram_bot.py`).
+- `main.py`: Application entrypoint running startup diagnostics and the bot.
+- `agents/`: Autonomous agents (`base.py`, `researcher.py`, `evaluator.py`, `script_writer.py`, `narration_planner.py`, `narration_generator.py`, `animation_planner.py`, `scene_animator.py`).
+- `core/`: FSM transitions (`state_machine.py`), Pydantic schemas (`models.py`), DB models (`database.py`), and cost tracking (`cost_tracker.py`).
+- `services/`: Telegram bot (`telegram_bot.py`), video rendering (`renderer.py`), and YouTube publishing (`youtube_publisher.py`).
 - `notebooks/`: Testing and diagnostic notebooks (`agent_testing.ipynb`, `database_explorer.ipynb`).
 
 ## Development Workflow (The HOW)
