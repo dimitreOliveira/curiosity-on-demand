@@ -43,8 +43,9 @@ from core.models import (
     Script,
     WorkflowState,
 )
-from core.state_machine import PipelineStateMachine
+from core.state_machine import InvalidStateTransitionError, PipelineStateMachine
 from services.renderer import AnimationRenderer
+from services.youtube_publisher import YouTubePublisher
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +91,7 @@ class TelegramBotService:
         self.planner = AnimationPlannerAgent(settings=self.settings)
         self.animator = SceneAnimatorAgent(settings=self.settings)
         self.renderer = AnimationRenderer(settings=self.settings)
+        self.youtube_publisher = YouTubePublisher(settings=self.settings)
         self.app: Application | None = None
 
     def _is_user_authorized(
@@ -338,12 +340,33 @@ class TelegramBotService:
                 )
                 return
 
+            if active_project.state == WorkflowState.AWAITING_PUBLISH_APPROVAL:
+                keyboard = [
+                    [
+                        InlineKeyboardButton(
+                            "🚀 Publish to YouTube",
+                            callback_data=f"publish_youtube:{active_project.project_id}",
+                        ),
+                        InlineKeyboardButton(
+                            "⏭️ Skip (Complete)",
+                            callback_data=f"skip_publish:{active_project.project_id}",
+                        ),
+                    ]
+                ]
+                await update.message.reply_text(
+                    "🎬 *Your video is ready!* Please click *Publish to YouTube* or *Skip* to finish the project.",
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode=ParseMode.MARKDOWN,
+                )
+                return
+
             if active_project.state in (
                 WorkflowState.RESEARCHING,
                 WorkflowState.SCRIPTING,
                 WorkflowState.NARRATING,
                 WorkflowState.STYLING,
                 WorkflowState.ANIMATING,
+                WorkflowState.PUBLISHING,
             ):
                 await update.message.reply_text(
                     "⏳ A task is currently running for your project. Please wait for it to finish or use `/cancel` to abort.",
@@ -453,6 +476,41 @@ class TelegramBotService:
                 )
 
             asyncio.create_task(self._run_full_animation_pipeline(project_id))
+
+        elif data.startswith("publish_youtube:"):
+            project_id = data.split(":", 1)[1]
+            project = await self.db.get_project(project_id)
+            if not project or project.state != WorkflowState.AWAITING_PUBLISH_APPROVAL:
+                if isinstance(query.message, Message):
+                    await query.message.reply_text(
+                        "ℹ️ This publish review is no longer active."
+                    )
+                return
+
+            if isinstance(query.message, Message):
+                await query.message.reply_text(
+                    "🚀 *Initiating YouTube upload...*\n\nUploading video to YouTube...",
+                    parse_mode=ParseMode.MARKDOWN,
+                )
+
+            asyncio.create_task(self._run_youtube_publish_pipeline(project_id))
+
+        elif data.startswith("skip_publish:"):
+            project_id = data.split(":", 1)[1]
+            project = await self.db.get_project(project_id)
+            if not project or project.state != WorkflowState.AWAITING_PUBLISH_APPROVAL:
+                if isinstance(query.message, Message):
+                    await query.message.reply_text(
+                        "ℹ️ This publish review is no longer active."
+                    )
+                return
+
+            await self.state_machine.transition(project_id, WorkflowState.COMPLETED)
+            if isinstance(query.message, Message):
+                await query.message.reply_text(
+                    "✅ *Video generation completed!*\n\nYour video is safely stored on the server.",
+                    parse_mode=ParseMode.MARKDOWN,
+                )
 
     # ==========================================================================
     # Pipeline Orchestration
@@ -1199,7 +1257,9 @@ class TelegramBotService:
                 final_video_path=str(final_video_path),
             )
 
-            await self.state_machine.transition(project_id, WorkflowState.COMPLETED)
+            await self.state_machine.transition(
+                project_id, WorkflowState.AWAITING_PUBLISH_APPROVAL
+            )
 
             # Send final video or preview sample to user via Telegram
             if self.app and final_video_path.exists():
@@ -1335,6 +1395,34 @@ class TelegramBotService:
                         text=cost_report,
                         parse_mode=ParseMode.MARKDOWN,
                     )
+
+                    # Prompt user for YouTube publishing approval
+                    keyboard = [
+                        [
+                            InlineKeyboardButton(
+                                "🚀 Publish to YouTube",
+                                callback_data=f"publish_youtube:{project_id}",
+                            ),
+                            InlineKeyboardButton(
+                                "⏭️ Skip (Complete)",
+                                callback_data=f"skip_publish:{project_id}",
+                            ),
+                        ]
+                    ]
+                    format_desc = (
+                        "YouTube Short (Vertical 9:16)"
+                        if is_vertical
+                        else "YouTube Video (16:9)"
+                    )
+                    await self.app.bot.send_message(
+                        chat_id=session.chat_id,
+                        text=(
+                            "🎬 *Ready for Publishing!*\n\n"
+                            f"Would you like to publish this video as a *{format_desc}* to YouTube?"
+                        ),
+                        reply_markup=InlineKeyboardMarkup(keyboard),
+                        parse_mode=ParseMode.MARKDOWN,
+                    )
                 except Exception as send_err:
                     logger.exception(
                         "Failed to send video to Telegram for project %s",
@@ -1354,7 +1442,11 @@ class TelegramBotService:
                 "Error during full animation pipeline for project %s", project_id
             )
             session = await self.db.get_project(project_id)
-            if session and session.state != WorkflowState.COMPLETED:
+            if session and session.state not in (
+                WorkflowState.COMPLETED,
+                WorkflowState.AWAITING_PUBLISH_APPROVAL,
+                WorkflowState.PUBLISHING,
+            ):
                 await self.state_machine.transition(
                     project_id, WorkflowState.FAILED, error_message=str(err)
                 )
@@ -1362,5 +1454,148 @@ class TelegramBotService:
                 await self.app.bot.send_message(
                     chat_id=session.chat_id,
                     text=f"⚠️ *An error occurred during video rendering and assembly:*\n`{err}`",
+                    parse_mode=ParseMode.MARKDOWN,
+                )
+
+    async def _run_youtube_publish_pipeline(self, project_id: str) -> None:
+        """Upload and publish the final master video to YouTube upon user approval."""
+        try:
+            session = await self.db.get_project(project_id)
+            if not session:
+                logger.error("Project %s not found for YouTube publishing", project_id)
+                return
+
+            if (
+                not session.final_video_path
+                or not Path(session.final_video_path).exists()
+            ):
+                logger.error(
+                    "Final video file not found for project %s at %s",
+                    project_id,
+                    session.final_video_path,
+                )
+                if self.app:
+                    await self.app.bot.send_message(
+                        chat_id=session.chat_id,
+                        text="⚠️ *Cannot publish to YouTube:* Master video file was not found on the server.",
+                        parse_mode=ParseMode.MARKDOWN,
+                    )
+                return
+
+            # Check if YouTube credentials are configured
+            if not self.youtube_publisher.is_configured():
+                logger.warning(
+                    "YouTube publishing requested but not configured for project %s",
+                    project_id,
+                )
+                keyboard = [
+                    [
+                        InlineKeyboardButton(
+                            "🔄 Retry Publish",
+                            callback_data=f"publish_youtube:{project_id}",
+                        ),
+                        InlineKeyboardButton(
+                            "⏭️ Skip (Complete)",
+                            callback_data=f"skip_publish:{project_id}",
+                        ),
+                    ]
+                ]
+                if self.app:
+                    await self.app.bot.send_message(
+                        chat_id=session.chat_id,
+                        text=(
+                            "⚠️ *YouTube publishing is not configured.*\n\n"
+                            "To enable publishing, set `YOUTUBE_CLIENT_ID`, `YOUTUBE_CLIENT_SECRET`, "
+                            "and `YOUTUBE_REFRESH_TOKEN` (or generate `storage/youtube_token.json`).\n\n"
+                            "Once configured, click *Retry Publish*, or click *Skip* to complete without publishing."
+                        ),
+                        reply_markup=InlineKeyboardMarkup(keyboard),
+                        parse_mode=ParseMode.MARKDOWN,
+                    )
+                return
+
+            await self.state_machine.transition(project_id, WorkflowState.PUBLISHING)
+
+            if self.app:
+                await self.app.bot.send_message(
+                    chat_id=session.chat_id,
+                    text="⏳ *Uploading master video to YouTube...*",
+                    parse_mode=ParseMode.MARKDOWN,
+                )
+
+            project_duration = self._get_project_video_duration(session)
+            is_vertical = self.settings.is_vertical_video(project_duration)
+
+            result = await self.youtube_publisher.publish_video(
+                video_path=session.final_video_path,
+                topic=session.topic,
+                script=session.script,
+                storyboard=session.storyboard,
+                is_vertical=is_vertical,
+            )
+
+            await self.db.save_youtube_url(project_id, result.video_url)
+            await self.state_machine.transition(project_id, WorkflowState.COMPLETED)
+
+            if self.app:
+                format_label = (
+                    "📱 *Format:* YouTube Short (Vertical 9:16)"
+                    if result.is_short
+                    else "🖥️ *Format:* YouTube Video (Horizontal 16:9)"
+                )
+                msg_text = (
+                    "🎉 *Your video is now live on YouTube!* 🚀\n\n"
+                    f"🎬 *Title:* {result.title}\n"
+                    f"{format_label}\n"
+                    f"👁️ *Privacy:* `{result.privacy_status}`\n\n"
+                    f"🔗 [Watch on YouTube]({result.video_url})\n"
+                    f"`{result.video_url}`"
+                )
+                await self.app.bot.send_message(
+                    chat_id=session.chat_id,
+                    text=msg_text,
+                    parse_mode=ParseMode.MARKDOWN,
+                )
+
+        except Exception as err:
+            logger.exception(
+                "Error during YouTube publishing for project %s", project_id
+            )
+            session = await self.db.get_project(project_id)
+            if session and session.state == WorkflowState.PUBLISHING:
+                try:
+                    await self.state_machine.transition(
+                        project_id, WorkflowState.AWAITING_PUBLISH_APPROVAL
+                    )
+                except (
+                    InvalidStateTransitionError,
+                    ValueError,
+                    RuntimeError,
+                ) as rev_err:
+                    logger.debug(
+                        "Could not revert state to AWAITING_PUBLISH_APPROVAL: %s",
+                        rev_err,
+                    )
+
+            if self.app and session:
+                keyboard = [
+                    [
+                        InlineKeyboardButton(
+                            "🔄 Retry Publish",
+                            callback_data=f"publish_youtube:{project_id}",
+                        ),
+                        InlineKeyboardButton(
+                            "⏭️ Skip (Complete)",
+                            callback_data=f"skip_publish:{project_id}",
+                        ),
+                    ]
+                ]
+                await self.app.bot.send_message(
+                    chat_id=session.chat_id,
+                    text=(
+                        f"⚠️ *Failed to publish video to YouTube:*\n`{err}`\n\n"
+                        f"Your video remains safely saved on the server. You can retry or skip."
+                    ),
+                    reply_markup=InlineKeyboardMarkup(keyboard),
                     parse_mode=ParseMode.MARKDOWN,
                 )

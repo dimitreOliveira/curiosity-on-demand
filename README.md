@@ -77,15 +77,27 @@ Curiosity On Demand is an automated educational video research, scripting, narra
                                    +---> Approved?                                                                                    |
                                             |                                                                                         |
                                             v (Async Dispatch: State ANIMATING)                                                       |
-                                   +-------------------------+                                                                        |
-                                   |   SceneAnimatorAgent    | (Generates all scene HTML animations in parallel)                      |
-                                   | NarrationGeneratorAgent | (Synthesizes all scene audios in parallel via Gemini TTS)              |
-                                   |    AnimationRenderer    | (Renders Chromium video clips & muxes master MP4 with audio)           |
-                                   +-------------------------+                                                                        |
-                                            |                                                                                         |
-                                            v                                                                                         |
-                                   [ State: COMPLETED ] ------------------------------------------------------------------------------+
-                                                          (Sends final master MP4 video, cost badge, & detailed resource breakdown to Telegram)
+                                            +-------------------------+                                                                        |
+                                            |   SceneAnimatorAgent    | (Generates all scene HTML animations in parallel)                      |
+                                            | NarrationGeneratorAgent | (Synthesizes all scene audios in parallel via Gemini TTS)              |
+                                            |    AnimationRenderer    | (Renders Chromium video clips & muxes master MP4 with audio)           |
+                                            +-------------------------+                                                                        |
+                                                     |                                                                                         |
+                                                     v                                                                                         |
+                                            [ State: AWAITING_PUBLISH_APPROVAL ] --------------------------------------------------------------+
+                                                     | (Sends video preview, cost badge & resource report to Telegram)
+                                                     +---> Skip / Don't Publish? ---> [ State: COMPLETED ]
+                                                     |
+                                                     +---> Approved?
+                                                              |
+                                                              v (Async Dispatch: State PUBLISHING)
+                                                     +--------------------+
+                                                     |  YouTubePublisher  | (Uploads master MP4/Shorts to YouTube via Data API v3)
+                                                     +--------------------+
+                                                              |
+                                                              v
+                                                     [ State: COMPLETED ]
+                                                     (Sends live YouTube URL to user via Telegram)
 ```
 
 ---
@@ -96,6 +108,7 @@ Curiosity On Demand is an automated educational video research, scripting, narra
 - **AI & LLM Grounding:** Google GenAI SDK (`google-genai` 2.0+) using `gemini-3.7-flash` with native Google Search tool and structured JSON schemas
 - **Voiceover Speech Generation:** Gemini TTS (`gemini-3.1-flash-tts-preview`) with natural-language directorial prompts and inline emotional audio tags
 - **Animation & Rendering:** Playwright (Headless Chromium for SVG + HTML5 Canvas execution) and `imageio-ffmpeg` for MP4 video assembly and audio multiplexing
+- **YouTube Publishing:** Google YouTube Data API v3 (`google-api-python-client`, `google-auth-oauthlib`) with automatic chapter timestamps, hashtags, and Shorts format support
 - **Cost & Token Tracking:** Granular per-component usage logging (input/output tokens, search grounding queries, TTS audio duration, and estimated USD cost) with automatic Telegram breakdown reports
 - **Data Validation & Settings:** `pydantic` v2, `pydantic-settings`
 - **Persistence & State:** SQLAlchemy 2.0 async + SQLite (`aiosqlite`)
@@ -141,7 +154,27 @@ VIDEO_HEIGHT=720
 VERTICAL_VIDEO_WIDTH=720
 VERTICAL_VIDEO_HEIGHT=1280
 VERTICAL_VIDEO_THRESHOLD_SECONDS=120
+
+# YouTube Data API Publishing (Optional)
+# Configure direct tokens (recommended for servers/Docker) or token file:
+YOUTUBE_CLIENT_ID=your_client_id
+YOUTUBE_CLIENT_SECRET=your_client_secret
+YOUTUBE_REFRESH_TOKEN=your_refresh_token
+YOUTUBE_DEFAULT_PRIVACY_STATUS=public
 ```
+
+#### YouTube Publishing Setup
+Curiosity On Demand can automatically upload videos as standard videos or YouTube Shorts upon your approval in Telegram.
+
+For complete step-by-step instructions on creating Google Cloud OAuth credentials and generating tokens, see the [YouTube Setup Guide](docs/youtube_setup.md).
+
+**Quick Setup:**
+1. Download OAuth 2.0 desktop client credentials (`client_secrets.json`) from [Google Cloud Console](https://console.cloud.google.com/).
+2. Run the interactive authorization helper:
+   ```bash
+   python -m services.youtube_publisher --client-secrets client_secrets.json
+   ```
+3. Follow the browser prompt to authorize your channel. The tool saves `storage/youtube_token.json` and prints the `YOUTUBE_CLIENT_ID`, `YOUTUBE_CLIENT_SECRET`, and `YOUTUBE_REFRESH_TOKEN` to paste directly into `.env`.
 
 ---
 

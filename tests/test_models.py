@@ -142,6 +142,8 @@ def test_workflow_states():
         "STYLING",
         "AWAITING_STYLE_APPROVAL",
         "ANIMATING",
+        "AWAITING_PUBLISH_APPROVAL",
+        "PUBLISHING",
         "COMPLETED",
         "FAILED",
     }
