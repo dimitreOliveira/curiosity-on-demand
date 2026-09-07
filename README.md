@@ -149,11 +149,14 @@ ANIMATION_CONCURRENCY=3
 FFMPEG_CONCURRENCY=4
 
 # Video Format & Dimensions (Videos <= 2 min are automatically generated in vertical 9:16 format)
-VIDEO_WIDTH=1280
-VIDEO_HEIGHT=720
-VERTICAL_VIDEO_WIDTH=720
-VERTICAL_VIDEO_HEIGHT=1280
+VIDEO_WIDTH=1920
+VIDEO_HEIGHT=1080
+VERTICAL_VIDEO_WIDTH=1080
+VERTICAL_VIDEO_HEIGHT=1920
 VERTICAL_VIDEO_THRESHOLD_SECONDS=120
+TELEGRAM_PREVIEW_MAX_DURATION_SECONDS=60.0
+TELEGRAM_UPLOAD_TIMEOUT_SECONDS=300.0
+TELEGRAM_REQUEST_TIMEOUT_SECONDS=60.0
 
 # YouTube Data API Publishing (Optional)
 # Configure direct tokens (recommended for servers/Docker) or token file:
@@ -249,8 +252,8 @@ Send any curiosity or educational topic directly to the bot in Telegram:
 - **Default Duration:** If no duration is specified, the default duration from settings (5 minutes) is used.
 - **Specifying Duration:** Include duration tags in your topic, such as `How do black holes evaporate? (2 min short)` or `Quantum computing explained (5 min)`.
 - **Automatic Aspect Ratio (Shorts vs Widescreen):**
-  - **Vertical 9:16 (YouTube Shorts):** Videos with duration &le; 2 minutes (120 seconds) are automatically styled, coded, and rendered in vertical 9:16 resolution (`720x1280`).
-  - **Horizontal 16:9 (Standard Video):** Videos longer than 2 minutes are rendered in horizontal 16:9 widescreen (`1280x720`).
+  - **Vertical 9:16 (YouTube Shorts):** Videos with duration &le; 2 minutes (120 seconds) are automatically styled, coded, and rendered in vertical 9:16 Full HD resolution (`1080x1920`).
+  - **Horizontal 16:9 (Standard Video):** Videos longer than 2 minutes are rendered in horizontal 16:9 Full HD widescreen (`1920x1080`).
 
 ### 3. Human-in-the-Loop Review Stages
 Curiosity On Demand gives you full creative control at every milestone. Tap **Approve** to advance to the next stage, or reply with feedback to refine:

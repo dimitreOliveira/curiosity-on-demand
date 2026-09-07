@@ -20,13 +20,28 @@ def parse_duration_to_seconds(target_duration: str, default_seconds: int = 600) 
 
     text = target_duration.lower().strip()
 
+    # Match MM:SS or M:SS e.g. "1:30", "01:30", "0:45", "2:00"
+    mmss_match = re.search(r"(?:^|[^\w:])(\d{1,2}):(\d{2})(?!\d)", text)
+    if mmss_match:
+        m, s = int(mmss_match.group(1)), int(mmss_match.group(2))
+        return max(10, m * 60 + s)
+
+    # Match composite min + sec e.g. "1m 30s", "1 min 30 sec", "1m30s"
+    min_sec_match = re.search(
+        r"(?<!:)\b(\d+)\s*(?:minutes?|mins?|m)\s*(\d+)\s*(?:seconds?|secs?|s)\b",
+        text,
+    )
+    if min_sec_match:
+        m, s = int(min_sec_match.group(1)), int(min_sec_match.group(2))
+        return max(10, m * 60 + s)
+
     # Match seconds e.g. "30s", "45 seconds", "90 sec", "45-second"
-    sec_match = re.search(r"(\d+(?:\.\d+)?)[-\s]*(?:seconds?|secs?|s)\b", text)
+    sec_match = re.search(r"(?<!:)\b(\d+(?:\.\d+)?)[-\s]*(?:seconds?|secs?|s)\b", text)
     if sec_match:
         return max(10, int(float(sec_match.group(1))))
 
     # Match minutes e.g. "5m", "2 min", "10 minutes", "~5 mins", "3-minute"
-    min_match = re.search(r"(\d+(?:\.\d+)?)[-\s]*(?:minutes?|mins?|m)\b", text)
+    min_match = re.search(r"(?<!:)\b(\d+(?:\.\d+)?)[-\s]*(?:minutes?|mins?|m)\b", text)
     if min_match:
         return max(10, int(float(min_match.group(1)) * 60))
 

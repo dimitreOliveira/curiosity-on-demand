@@ -4,13 +4,27 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from telegram import Message, Update
+from telegram.error import BadRequest, TimedOut
 
 from core.models import EvaluationResult, WorkflowState
-from services.telegram_bot import TelegramBotService, extract_target_duration
+from services.telegram_bot import (
+    TelegramBotService,
+    extract_target_duration,
+    split_message_chunks,
+)
 
 
 def test_extract_target_duration():
     """Test extracting video duration from topics."""
+    assert (
+        extract_target_duration(
+            "The lifecycle o the Alie's Xenomorph (1:30 minute video)"
+        )
+        == "1m 30s"
+    )
+    assert extract_target_duration("Short animation 0:45 min") == "45 seconds"
+    assert extract_target_duration("Epic saga 2:00") == "2 minutes"
+    assert extract_target_duration("Space 1m 30s video") == "1m 30s"
     assert (
         extract_target_duration("Explain quantum computing (5 min video)")
         == "5 minutes"
@@ -532,7 +546,17 @@ async def test_telegram_bot_run_full_animation_pipeline(
         sample_storyboard.scenes
     )
     assert mock_app.bot.send_video.call_count == 1
-    caption_sent = mock_app.bot.send_video.call_args[1]["caption"]
+    send_video_kwargs = mock_app.bot.send_video.call_args[1]
+    assert send_video_kwargs["supports_streaming"] is True
+    assert (
+        send_video_kwargs["read_timeout"]
+        == mock_settings.telegram_upload_timeout_seconds
+    )
+    assert (
+        send_video_kwargs["write_timeout"]
+        == mock_settings.telegram_upload_timeout_seconds
+    )
+    caption_sent = send_video_kwargs["caption"]
     assert "Est. Cost:" in caption_sent
     assert "⏱️ *Duration:* 0m 20s" in caption_sent
     assert "(Preview)" not in caption_sent
@@ -571,16 +595,16 @@ async def test_full_animation_pipeline_large_video_sends_preview(
         return output_video_path
 
     preview_file = tmp_path / "preview.mp4"
-    preview_file.write_bytes(b"Sample3MinPreviewBytes")
+    preview_file.write_bytes(b"Sample1MinPreviewBytes")
 
     async def mock_preview(video_path, output_path, **kwargs):
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_bytes(b"Sample3MinPreviewBytes")
+        output_path.write_bytes(b"Sample1MinPreviewBytes")
         return output_path
 
     bot_service.renderer.render_scene_video = AsyncMock(side_effect=mock_render_video)
     bot_service.renderer.assemble_video = AsyncMock(side_effect=mock_assemble)
-    # Total duration is 5 minutes 24 seconds (324s > 180s preview limit)
+    # Total duration is 5 minutes 24 seconds (324s > 60s preview limit)
     bot_service.renderer.get_media_duration = AsyncMock(return_value=324.0)
     bot_service.renderer.create_video_preview = AsyncMock(side_effect=mock_preview)
 
@@ -620,19 +644,19 @@ async def test_full_animation_pipeline_large_video_sends_preview(
     assert updated is not None
     assert updated.state == WorkflowState.AWAITING_PUBLISH_APPROVAL
 
-    # Verify create_video_preview was called with 180.0s max duration
+    # Verify create_video_preview was called with 60.0s max duration
     assert bot_service.renderer.create_video_preview.call_count == 1
     call_kwargs = bot_service.renderer.create_video_preview.call_args[1]
-    assert call_kwargs["max_duration_seconds"] == 180.0
+    assert call_kwargs["max_duration_seconds"] == 60.0
 
     # Verify preview video bytes were sent
     assert mock_app.bot.send_video.call_count == 1
     sent_video = mock_app.bot.send_video.call_args[1]["video"]
-    assert sent_video == b"Sample3MinPreviewBytes"
+    assert sent_video == b"Sample1MinPreviewBytes"
 
     # Verify caption mentions preview duration, total duration, and informational notice
     caption = mock_app.bot.send_video.call_args[1]["caption"]
-    assert "⏱️ *Duration:* 3m 00s (Preview) • Total: 5m 24s" in caption
+    assert "⏱️ *Duration:* 1m 00s (Preview) • Total: 5m 24s" in caption
     assert "Preview Notice" in caption
     assert "50MB" in caption
     assert "saved on the server" in caption
@@ -1208,7 +1232,7 @@ async def test_telegram_bot_run_style_pipeline_vertical_format(
     sample_animation_style,
     sample_scene_animation,
 ):
-    """Test that videos with duration <= 2 min generate vertical 720x1280 assets during styling."""
+    """Test that videos with duration <= 2 min generate vertical 1080x1920 assets during styling."""
     bot_service = TelegramBotService(settings=mock_settings, db=memory_db)
     bot_service.planner.plan_style = AsyncMock(return_value=sample_animation_style)
     bot_service.animator.animate_scene = AsyncMock(return_value=sample_scene_animation)
@@ -1274,17 +1298,17 @@ async def test_telegram_bot_run_style_pipeline_vertical_format(
     assert bot_service.animator.animate_scene.call_count == 1
     anim_kwargs = bot_service.animator.animate_scene.call_args[1]
     assert anim_kwargs["is_vertical"] is True
-    assert anim_kwargs["width"] == 720
-    assert anim_kwargs["height"] == 1280
+    assert anim_kwargs["width"] == 1080
+    assert anim_kwargs["height"] == 1920
 
     assert bot_service.renderer.render_sample_frame.call_count == 1
     render_kwargs = bot_service.renderer.render_sample_frame.call_args[1]
-    assert render_kwargs["width"] == 720
-    assert render_kwargs["height"] == 1280
+    assert render_kwargs["width"] == 1080
+    assert render_kwargs["height"] == 1920
 
     assert mock_app.bot.send_photo.call_count == 1
     photo_caption = mock_app.bot.send_photo.call_args[1]["caption"]
-    assert "Vertical 9:16 (720x1280 • YouTube Shorts style)" in photo_caption
+    assert "Vertical 9:16 (1080x1920 • YouTube Shorts style)" in photo_caption
 
 
 @pytest.mark.asyncio
@@ -1295,7 +1319,7 @@ async def test_telegram_bot_run_full_pipeline_vertical_format(
     sample_animation_style,
     sample_storyboard,
 ):
-    """Test that full pipeline for <= 2 min video renders and sends vertical 720x1280 video."""
+    """Test that full pipeline for <= 2 min video renders and sends vertical 1080x1920 video."""
     bot_service = TelegramBotService(settings=mock_settings, db=memory_db)
     bot_service.animator.animate_storyboard = AsyncMock(return_value=sample_storyboard)
 
@@ -1375,15 +1399,15 @@ async def test_telegram_bot_run_full_pipeline_vertical_format(
     assert bot_service.animator.animate_storyboard.call_count == 1
     storyboard_kwargs = bot_service.animator.animate_storyboard.call_args[1]
     assert storyboard_kwargs["is_vertical"] is True
-    assert storyboard_kwargs["width"] == 720
-    assert storyboard_kwargs["height"] == 1280
+    assert storyboard_kwargs["width"] == 1080
+    assert storyboard_kwargs["height"] == 1920
 
     # Check send_video called with vertical dimensions and badge
     assert mock_app.bot.send_video.call_count == 1
     send_video_kwargs = mock_app.bot.send_video.call_args[1]
-    assert send_video_kwargs["width"] == 720
-    assert send_video_kwargs["height"] == 1280
-    assert "Vertical 9:16 (720x1280 • Shorts)" in send_video_kwargs["caption"]
+    assert send_video_kwargs["width"] == 1080
+    assert send_video_kwargs["height"] == 1920
+    assert "Vertical 9:16 (1080x1920 • Shorts)" in send_video_kwargs["caption"]
 
 
 @pytest.mark.asyncio
@@ -1852,3 +1876,171 @@ async def test_telegram_bot_handle_cancel_active_project(mock_settings, memory_d
     assert updated is not None
     assert updated.state == WorkflowState.FAILED
     assert updated.error_message == "Cancelled by user."
+
+
+@pytest.mark.asyncio
+async def test_telegram_bot_build_application_timeout_configuration(
+    mock_settings, memory_db
+):
+    """Test that build_application configures connect, read, write, and media timeouts."""
+    mock_settings.telegram_bot_token = "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"
+    mock_settings.telegram_upload_timeout_seconds = 240.0
+    mock_settings.telegram_request_timeout_seconds = 45.0
+    bot_service = TelegramBotService(settings=mock_settings, db=memory_db)
+
+    app = await bot_service.build_application()
+    req = app.bot.request
+    assert req._client_kwargs["timeout"].connect == 30.0
+    assert req._client_kwargs["timeout"].read == 45.0
+    assert req._client_kwargs["timeout"].write == 45.0
+    assert req._media_write_timeout == 240.0
+
+
+@pytest.mark.asyncio
+async def test_full_animation_pipeline_send_video_retry_on_timeout_success(
+    mock_settings,
+    memory_db,
+    sample_research_report,
+    sample_script,
+    sample_animation_style,
+    sample_storyboard,
+    tmp_path,
+):
+    """Test that if send_video times out on attempt 1, it retries and succeeds on attempt 2."""
+    bot_service = TelegramBotService(settings=mock_settings, db=memory_db)
+
+    async def mock_render_video(html_content, output_video_path, **kwargs):
+        output_video_path.parent.mkdir(parents=True, exist_ok=True)
+        output_video_path.write_bytes(b"FakeSceneVideoBytes")
+        return output_video_path
+
+    async def mock_assemble(scene_video_paths, output_video_path, *args, **kwargs):
+        output_video_path.parent.mkdir(parents=True, exist_ok=True)
+        output_video_path.write_bytes(b"FakeMasterVideoBytes")
+        return output_video_path
+
+    bot_service.renderer.render_scene_video = AsyncMock(side_effect=mock_render_video)
+    bot_service.renderer.assemble_video = AsyncMock(side_effect=mock_assemble)
+    bot_service.renderer.get_media_duration = AsyncMock(return_value=20.0)
+    bot_service.animator.animate_storyboard = AsyncMock(return_value=sample_storyboard)
+
+    mock_app = MagicMock()
+    mock_app.bot.send_message = AsyncMock()
+    # First call raises TimedOut, second call succeeds
+    mock_app.bot.send_video = AsyncMock(
+        side_effect=[TimedOut("Telegram read timeout"), MagicMock()]
+    )
+    bot_service.app = mock_app
+
+    session = await memory_db.create_project(
+        user_id=123, chat_id=456, topic="History of Rome"
+    )
+    await memory_db.save_research_report(session.project_id, sample_research_report)
+    await memory_db.save_script(session.project_id, sample_script)
+    await memory_db.save_style(session.project_id, sample_animation_style)
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.RESEARCHING
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.AWAITING_RESEARCH_APPROVAL
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.SCRIPTING
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.AWAITING_SCRIPT_APPROVAL
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.STYLING
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.AWAITING_STYLE_APPROVAL
+    )
+
+    with patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+        await bot_service._run_full_animation_pipeline(session.project_id)
+        mock_sleep.assert_called_once_with(2.0)
+
+    # Should have retried once: 2 calls total
+    assert mock_app.bot.send_video.call_count == 2
+    updated = await memory_db.get_project(session.project_id)
+    assert updated is not None
+    assert updated.state == WorkflowState.AWAITING_PUBLISH_APPROVAL
+
+
+def test_split_message_chunks():
+    """Test message chunking preserving paragraph and line boundaries."""
+    # Under limit
+    short_text = "Hello world!"
+    assert split_message_chunks(short_text, max_chars=100) == ["Hello world!"]
+
+    # Multi-paragraph exceeding limit
+    para_text = "Para 1\n\nPara 2\n\nPara 3"
+    chunks = split_message_chunks(para_text, max_chars=10)
+    assert len(chunks) == 3
+    assert chunks[0] == "Para 1"
+    assert chunks[1] == "Para 2"
+    assert chunks[2] == "Para 3"
+
+    # Single paragraph with lines exceeding limit
+    lines_text = "Line 1\nLine 2\nLine 3"
+    chunks = split_message_chunks(lines_text, max_chars=14)
+    assert len(chunks) == 2
+    assert chunks[0] == "Line 1\nLine 2"
+    assert chunks[1] == "Line 3"
+
+    # Giant line fallback
+    giant_text = "A" * 50
+    chunks = split_message_chunks(giant_text, max_chars=20)
+    assert len(chunks) == 3
+    assert len(chunks[0]) == 20
+    assert len(chunks[1]) == 20
+    assert len(chunks[2]) == 10
+
+
+@pytest.mark.asyncio
+async def test_send_message_chunks_markdown_entity_parse_fallback(
+    mock_settings, memory_db
+):
+    """Test that _send_message_chunks falls back to plain text if Markdown parsing fails."""
+    bot_service = TelegramBotService(settings=mock_settings, db=memory_db)
+    mock_app = MagicMock()
+
+    # First call with parse_mode=MARKDOWN raises BadRequest (entity parse error)
+    # Second call without parse_mode succeeds
+    mock_app.bot.send_message = AsyncMock(
+        side_effect=[
+            BadRequest(
+                "Can't parse entities: can't find end of the entity starting at byte offset 4135"
+            ),
+            MagicMock(),
+        ]
+    )
+    bot_service.app = mock_app
+
+    bad_markdown = "This has an unclosed *bold entity without ending."
+    await bot_service._send_message_chunks(chat_id=1234, text=bad_markdown)
+
+    assert mock_app.bot.send_message.call_count == 2
+    # First call attempted with MARKDOWN
+    first_call_kwargs = mock_app.bot.send_message.call_args_list[0][1]
+    assert first_call_kwargs["parse_mode"] is not None
+
+    # Second call fell back to plain text (parse_mode=None)
+    second_call_kwargs = mock_app.bot.send_message.call_args_list[1][1]
+    assert second_call_kwargs["parse_mode"] is None
+    assert second_call_kwargs["text"] == bad_markdown
+
+
+@pytest.mark.asyncio
+async def test_get_project_video_duration_mm_ss_format(mock_settings, memory_db):
+    """Test that _get_project_video_duration correctly resolves 1:30 to 90 seconds."""
+    bot_service = TelegramBotService(settings=mock_settings, db=memory_db)
+    session = await memory_db.create_project(
+        user_id=123,
+        chat_id=456,
+        topic="The lifecycle o the Alie's Xenomorph (1:30 minute video)",
+    )
+
+    duration = bot_service._get_project_video_duration(session)
+    assert duration == 90.0

@@ -190,10 +190,10 @@ class SceneNarrationPlan(BaseModel):
         description="The original voiceover narration text from the script"
     )
     enhanced_narration: str = Field(
-        description="Voiceover narration annotated with inline emotional and delivery audio tags (e.g., [excitedly], [whispers], [amazed], [gasp], [serious], [very fast], [sighs])"
+        description="Voiceover narration annotated with inline emotional and delivery audio tags (e.g., [excitedly], [amazed], [curious], [thoughtful], [gasp], [serious], [very fast], [sighs]). Minimize [whispers], reserving only when strictly fitting."
     )
     tone: str = Field(
-        description="Emotional vibe and vocal attitude for this scene (e.g., 'Intrigued and hushed whisper', 'Upbeat energetic revelation')"
+        description="Emotional vibe and vocal attitude for this scene (e.g., 'Intrigued and thoughtful revelation', 'Upbeat energetic revelation')"
     )
     pace: str = Field(
         description="Pacing and cadence direction for this scene (e.g., 'Brisk delivery with punchy consonants', 'Deliberate cadence with dramatic pauses')"
