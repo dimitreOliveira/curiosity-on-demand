@@ -4,7 +4,7 @@
 help:
 	@echo "Available commands:"
 	@echo "  Local development:"
-	@echo "    make setup           - Install dependencies using uv sync"
+	@echo "    make setup           - Install dependencies and Playwright Chromium using uv"
 	@echo "    make build           - Install dependencies and sync local environment using uv sync --frozen"
 	@echo "    make run             - Start the Telegram bot research service"
 	@echo "    make lint            - Run linting and formatting (codespell, ruff, ty) on backend"
@@ -21,6 +21,7 @@ help:
 # Local commands
 setup:
 	uv sync
+	uv run playwright install chromium
 
 build:
 	uv sync --frozen

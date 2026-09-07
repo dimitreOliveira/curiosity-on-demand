@@ -3,6 +3,10 @@ name = "curiosity-on-demand"
 version = "0.1.0"
 description = "Grounded research video pipeline via Telegram and Gemini"
 readme = "README.md"
+license = "MIT"
+authors = [
+    { name = "Dimitre Oliveira", email = "dimitreandrew@gmail.com" }
+]
 requires-python = ">=3.12"
 dependencies = [
     "aiosqlite>=0.22.1",

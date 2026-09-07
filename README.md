@@ -180,7 +180,7 @@ For complete step-by-step instructions on creating Google Cloud OAuth credential
 
 ### 3. Setup & Running Locally
 
-Install dependencies:
+Install dependencies and Playwright Chromium:
 ```bash
 make setup
 ```
@@ -202,6 +202,39 @@ make lint
 
 ---
 
+### 4. Running with Docker
+
+Curiosity On Demand includes complete Docker Compose support for headless containerized deployment:
+
+1. **Build the container image:**
+   ```bash
+   make docker-build
+   ```
+
+2. **Start the bot service:**
+   ```bash
+   # Run in the background (daemon mode)
+   docker compose up -d
+
+   # Or run in the foreground
+   make docker-start
+   ```
+
+3. **View live logs:**
+   ```bash
+   docker compose logs -f app
+   ```
+
+4. **Stop the service:**
+   ```bash
+   make docker-stop
+   ```
+
+> [!NOTE]
+> The `./storage` directory is mounted into the container as `/app/storage`. Your SQLite database (`storage/curiosity.db`), rendered video outputs, and YouTube authorization tokens (`storage/youtube_token.json`) persist across container rebuilds and restarts.
+
+---
+
 ## Testing Notebooks
 
 Jupyter notebooks are available in `notebooks/`:
@@ -216,3 +249,9 @@ or locally:
 ```bash
 uv run jupyter lab
 ```
+
+---
+
+## License
+
+This project is licensed under the terms of the [MIT License](LICENSE).
