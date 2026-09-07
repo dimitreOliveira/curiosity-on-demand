@@ -1681,3 +1681,97 @@ async def test_telegram_bot_text_during_awaiting_publish(
     assert mock_msg.reply_text.call_count == 1
     reply_text = mock_msg.reply_text.call_args[0][0]
     assert "Your video is ready!" in reply_text
+
+
+@pytest.mark.asyncio
+async def test_telegram_bot_setup_commands(mock_settings, memory_db):
+    """Test setup_bot_commands successfully registers the 4 core bot commands."""
+    bot_service = TelegramBotService(settings=mock_settings, db=memory_db)
+    mock_app = MagicMock()
+    mock_bot = AsyncMock()
+    mock_app.bot = mock_bot
+    bot_service.app = mock_app
+
+    await bot_service.setup_bot_commands()
+
+    mock_bot.set_my_commands.assert_called_once()
+    registered_cmds = mock_bot.set_my_commands.call_args[0][0]
+    cmd_names = [c.command for c in registered_cmds]
+    assert cmd_names == ["start", "help", "status", "cancel"]
+
+
+@pytest.mark.asyncio
+async def test_telegram_bot_setup_commands_handles_error(mock_settings, memory_db):
+    """Test setup_bot_commands gracefully handles TelegramError without raising."""
+    from telegram.error import TelegramError
+
+    bot_service = TelegramBotService(settings=mock_settings, db=memory_db)
+    mock_app = MagicMock()
+    mock_bot = AsyncMock()
+    mock_bot.set_my_commands.side_effect = TelegramError("Connection failed")
+    mock_app.bot = mock_bot
+    bot_service.app = mock_app
+
+    # Should not raise exception
+    await bot_service.setup_bot_commands()
+
+
+@pytest.mark.asyncio
+async def test_telegram_bot_handle_start_authorized(mock_settings, memory_db):
+    """Test /start sends the full pipeline welcome message to authorized users."""
+    bot_service = TelegramBotService(settings=mock_settings, db=memory_db)
+
+    mock_update = MagicMock(spec=Update)
+    mock_chat = AsyncMock()
+    mock_update.effective_chat = mock_chat
+    mock_update.effective_user.id = 123
+    mock_update.effective_user.username = "tester"
+
+    await bot_service._handle_start(mock_update, MagicMock())
+
+    mock_chat.send_message.assert_called_once()
+    sent_text = mock_chat.send_message.call_args[0][0]
+    assert "Welcome to Curiosity On Demand!" in sent_text
+    assert "Grounded Research" in sent_text
+    assert "Voice Direction" in sent_text
+    assert "Visual Styling" in sent_text
+    assert "YouTube Publishing" in sent_text
+    assert "YouTube Shorts" in sent_text
+
+
+@pytest.mark.asyncio
+async def test_telegram_bot_handle_start_unauthorized(mock_settings, memory_db):
+    """Test /start rejects unauthorized users when allowed list is active."""
+    mock_settings.telegram_allowed_users = [999]
+    bot_service = TelegramBotService(settings=mock_settings, db=memory_db)
+
+    mock_update = MagicMock(spec=Update)
+    mock_chat = AsyncMock()
+    mock_update.effective_chat = mock_chat
+    mock_update.effective_user.id = 123
+    mock_update.effective_user.username = "unauthorized_user"
+
+    await bot_service._handle_start(mock_update, MagicMock())
+
+    mock_chat.send_message.assert_called_once()
+    sent_text = mock_chat.send_message.call_args[0][0]
+    assert "not authorized" in sent_text
+
+
+@pytest.mark.asyncio
+async def test_telegram_bot_handle_help(mock_settings, memory_db):
+    """Test /help sends the detailed guide including review flow and duration tips."""
+    bot_service = TelegramBotService(settings=mock_settings, db=memory_db)
+
+    mock_update = MagicMock(spec=Update)
+    mock_chat = AsyncMock()
+    mock_update.effective_chat = mock_chat
+
+    await bot_service._handle_help(mock_update, MagicMock())
+
+    mock_chat.send_message.assert_called_once()
+    sent_text = mock_chat.send_message.call_args[0][0]
+    assert "Curiosity On Demand - Help & Guide" in sent_text
+    assert "Human-in-the-Loop Review" in sent_text
+    assert "/status" in sent_text
+    assert "/cancel" in sent_text
