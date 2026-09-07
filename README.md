@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/project_header.jpg" alt="Curiosity On Demand Banner" width="100%">
+</p>
+
 # Curiosity On Demand
 
 Curiosity On Demand is an automated educational video research, scripting, narration synthesis, and SVG/Canvas animation pipeline orchestrated via Telegram. It takes a user-submitted topic, performs grounded web research using Gemini with Google Search Grounding, enables interactive human-in-the-loop review of research findings, synthesizes scene-by-scene narration scripts, plans voice talent direction with emotional audio tags, synthesizes natural-language speech via Gemini TTS (`gemini-3.1-flash-tts-preview`) with sample voice review, designs visual styles with sample frame review, generates SVG + HTML5 Canvas animations for all scenes, and renders and concatenates them into a finished master MP4 video with synchronized voiceover.
