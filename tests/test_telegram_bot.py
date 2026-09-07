@@ -1,9 +1,9 @@
 """Unit tests for TelegramBotService and interactive research & scripting orchestration."""
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from telegram import Message
+from telegram import Message, Update
 
 from core.models import EvaluationResult, WorkflowState
 from services.telegram_bot import TelegramBotService, extract_target_duration
@@ -522,7 +522,7 @@ async def test_telegram_bot_run_full_animation_pipeline(
 
     updated = await memory_db.get_project(session.project_id)
     assert updated is not None
-    assert updated.state == WorkflowState.COMPLETED
+    assert updated.state == WorkflowState.AWAITING_PUBLISH_APPROVAL
     assert updated.storyboard is not None
     assert updated.final_video_path is not None
     assert session.project_folder in updated.final_video_path
@@ -618,7 +618,7 @@ async def test_full_animation_pipeline_large_video_sends_preview(
 
     updated = await memory_db.get_project(session.project_id)
     assert updated is not None
-    assert updated.state == WorkflowState.COMPLETED
+    assert updated.state == WorkflowState.AWAITING_PUBLISH_APPROVAL
 
     # Verify create_video_preview was called with 180.0s max duration
     assert bot_service.renderer.create_video_preview.call_count == 1
@@ -703,8 +703,8 @@ async def test_full_animation_pipeline_send_failure_graceful_handling(
 
     updated = await memory_db.get_project(session.project_id)
     assert updated is not None
-    # Project state remains COMPLETED because render and assembly succeeded
-    assert updated.state == WorkflowState.COMPLETED
+    # Project state remains AWAITING_PUBLISH_APPROVAL because render and assembly succeeded
+    assert updated.state == WorkflowState.AWAITING_PUBLISH_APPROVAL
 
     # Verify error message sent to user
     failure_msgs = [
@@ -1129,7 +1129,7 @@ async def test_full_animation_pipeline_concurrent_narration_and_animation(
     # Verify narration storyboard persisted
     updated = await memory_db.get_project(session.project_id)
     assert updated is not None
-    assert updated.state == WorkflowState.COMPLETED
+    assert updated.state == WorkflowState.AWAITING_PUBLISH_APPROVAL
     assert updated.narration_storyboard is not None
 
 
@@ -1384,3 +1384,300 @@ async def test_telegram_bot_run_full_pipeline_vertical_format(
     assert send_video_kwargs["width"] == 720
     assert send_video_kwargs["height"] == 1280
     assert "Vertical 9:16 (720x1280 • Shorts)" in send_video_kwargs["caption"]
+
+
+@pytest.mark.asyncio
+async def test_telegram_bot_publish_youtube_flow(
+    mock_settings,
+    memory_db,
+    tmp_path,
+):
+    """Test full YouTube publishing workflow from callback approval to live URL notification."""
+    mock_app = MagicMock()
+    mock_app.bot = AsyncMock()
+    bot_service = TelegramBotService(settings=mock_settings, db=memory_db)
+    bot_service.app = mock_app
+
+    # Create project and set up final video path
+    session = await memory_db.create_project(
+        user_id=123, chat_id=456, topic="How Photosynthesis Works"
+    )
+    video_file = tmp_path / "final_video.mp4"
+    video_file.write_bytes(b"dummy mp4 video data")
+
+    # Fast-forward to AWAITING_PUBLISH_APPROVAL
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.RESEARCHING
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.AWAITING_RESEARCH_APPROVAL
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.SCRIPTING
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.AWAITING_SCRIPT_APPROVAL
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.STYLING
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.AWAITING_STYLE_APPROVAL
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.ANIMATING
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.AWAITING_PUBLISH_APPROVAL
+    )
+
+    # Attach video path to database record
+    async with memory_db.session_factory() as db_session:
+        from sqlalchemy import update
+
+        from core.database import ProjectRecord
+
+        await db_session.execute(
+            update(ProjectRecord)
+            .where(ProjectRecord.project_id == session.project_id)
+            .values(final_video_path=str(video_file))
+        )
+        await db_session.commit()
+
+    # 1. Test Callback Query "publish_youtube:"
+    mock_query = MagicMock()
+    mock_query.data = f"publish_youtube:{session.project_id}"
+    mock_query.answer = AsyncMock()
+    mock_query.message = MagicMock(spec=Message)
+    mock_query.message.reply_text = AsyncMock()
+
+    mock_update = MagicMock(spec=Update)
+    mock_update.callback_query = mock_query
+
+    with patch.object(
+        bot_service, "_run_youtube_publish_pipeline", new_callable=AsyncMock
+    ) as mock_pipe:
+        await bot_service._handle_callback_query(mock_update, MagicMock())
+        mock_pipe.assert_called_once()
+
+    mock_query.answer.assert_called_once()
+    mock_query.message.reply_text.assert_called_once()
+    assert "upload" in mock_query.message.reply_text.call_args[0][0].lower()
+
+    # 2. Execute pipeline directly with mocked publisher
+    from core.models import YouTubePublishResult
+
+    bot_service.youtube_publisher.is_configured = MagicMock(return_value=True)
+    bot_service.youtube_publisher.publish_video = AsyncMock(
+        return_value=YouTubePublishResult(
+            video_id="yt_12345",
+            video_url="https://youtu.be/yt_12345",
+            title="How Photosynthesis Works",
+            privacy_status="public",
+            is_short=False,
+        )
+    )
+
+    await bot_service._run_youtube_publish_pipeline(session.project_id)
+
+    updated = await memory_db.get_project(session.project_id)
+    assert updated is not None
+    assert updated.state == WorkflowState.COMPLETED
+    assert updated.youtube_url == "https://youtu.be/yt_12345"
+
+    # Verify live URL message sent to user
+    success_msgs = [
+        call[1]["text"]
+        for call in mock_app.bot.send_message.call_args_list
+        if "live on YouTube" in call[1].get("text", "")
+    ]
+    assert len(success_msgs) == 1
+    assert "https://youtu.be/yt_12345" in success_msgs[0]
+    assert "How Photosynthesis Works" in success_msgs[0]
+
+
+@pytest.mark.asyncio
+async def test_telegram_bot_skip_publish_callback(
+    mock_settings,
+    memory_db,
+):
+    """Test clicking skip_publish transitions to COMPLETED without uploading."""
+    mock_app = MagicMock()
+    mock_app.bot = AsyncMock()
+    bot_service = TelegramBotService(settings=mock_settings, db=memory_db)
+    bot_service.app = mock_app
+
+    session = await memory_db.create_project(
+        user_id=123, chat_id=456, topic="Skip Publish"
+    )
+
+    # Fast-forward to AWAITING_PUBLISH_APPROVAL
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.RESEARCHING
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.AWAITING_RESEARCH_APPROVAL
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.SCRIPTING
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.AWAITING_SCRIPT_APPROVAL
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.STYLING
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.AWAITING_STYLE_APPROVAL
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.ANIMATING
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.AWAITING_PUBLISH_APPROVAL
+    )
+
+    mock_query = AsyncMock()
+    mock_query.data = f"skip_publish:{session.project_id}"
+    mock_query.message = AsyncMock(spec=Message)
+
+    mock_update = MagicMock(spec=Update)
+    mock_update.callback_query = mock_query
+
+    await bot_service._handle_callback_query(mock_update, MagicMock())
+
+    updated = await memory_db.get_project(session.project_id)
+    assert updated is not None
+    assert updated.state == WorkflowState.COMPLETED
+    assert updated.youtube_url is None
+    assert mock_query.message.reply_text.call_count == 1
+    assert "Video generation completed" in mock_query.message.reply_text.call_args[0][0]
+
+
+@pytest.mark.asyncio
+async def test_telegram_bot_publish_unconfigured_notice(
+    mock_settings,
+    memory_db,
+    tmp_path,
+):
+    """Test that attempting to publish when unconfigured warns user with retry/skip options."""
+    mock_app = MagicMock()
+    mock_app.bot = AsyncMock()
+    bot_service = TelegramBotService(settings=mock_settings, db=memory_db)
+    bot_service.app = mock_app
+
+    session = await memory_db.create_project(
+        user_id=123, chat_id=456, topic="Unconfigured Publish"
+    )
+    video_file = tmp_path / "vid.mp4"
+    video_file.write_bytes(b"data")
+
+    # Fast-forward to AWAITING_PUBLISH_APPROVAL
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.RESEARCHING
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.AWAITING_RESEARCH_APPROVAL
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.SCRIPTING
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.AWAITING_SCRIPT_APPROVAL
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.STYLING
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.AWAITING_STYLE_APPROVAL
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.ANIMATING
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.AWAITING_PUBLISH_APPROVAL
+    )
+
+    async with memory_db.session_factory() as db_session:
+        from sqlalchemy import update
+
+        from core.database import ProjectRecord
+
+        await db_session.execute(
+            update(ProjectRecord)
+            .where(ProjectRecord.project_id == session.project_id)
+            .values(final_video_path=str(video_file))
+        )
+        await db_session.commit()
+
+    # Ensure publisher reports unconfigured
+    bot_service.youtube_publisher.is_configured = MagicMock(return_value=False)
+
+    await bot_service._run_youtube_publish_pipeline(session.project_id)
+
+    # Verify notice sent
+    warning_msgs = [
+        call[1]["text"]
+        for call in mock_app.bot.send_message.call_args_list
+        if "YouTube publishing is not configured" in call[1].get("text", "")
+    ]
+    assert len(warning_msgs) == 1
+    assert "YOUTUBE_CLIENT_ID" in warning_msgs[0]
+
+
+@pytest.mark.asyncio
+async def test_telegram_bot_text_during_awaiting_publish(
+    mock_settings,
+    memory_db,
+):
+    """Test text message received while waiting for publish approval prompts buttons."""
+    mock_app = MagicMock()
+    mock_app.bot = AsyncMock()
+    bot_service = TelegramBotService(settings=mock_settings, db=memory_db)
+    bot_service.app = mock_app
+
+    session = await memory_db.create_project(
+        user_id=123, chat_id=456, topic="Publish Text Test"
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.RESEARCHING
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.AWAITING_RESEARCH_APPROVAL
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.SCRIPTING
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.AWAITING_SCRIPT_APPROVAL
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.STYLING
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.AWAITING_STYLE_APPROVAL
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.ANIMATING
+    )
+    await bot_service.state_machine.transition(
+        session.project_id, WorkflowState.AWAITING_PUBLISH_APPROVAL
+    )
+
+    mock_msg = AsyncMock(spec=Message)
+    mock_msg.chat_id = 456
+    mock_msg.from_user.id = 123
+    mock_msg.from_user.username = "tester"
+    mock_msg.text = "Can I publish it now?"
+
+    mock_update = MagicMock(spec=Update)
+    mock_update.message = mock_msg
+    mock_update.effective_chat.id = 456
+    mock_update.effective_user.id = 123
+    mock_update.effective_user.username = "tester"
+
+    await bot_service._handle_message(mock_update, MagicMock())
+
+    assert mock_msg.reply_text.call_count == 1
+    reply_text = mock_msg.reply_text.call_args[0][0]
+    assert "Your video is ready!" in reply_text

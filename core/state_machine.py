@@ -70,13 +70,25 @@ class PipelineStateMachine:
             WorkflowState.FAILED,
         },
         WorkflowState.ANIMATING: {
+            WorkflowState.AWAITING_PUBLISH_APPROVAL,
             WorkflowState.COMPLETED,
+            WorkflowState.FAILED,
+        },
+        WorkflowState.AWAITING_PUBLISH_APPROVAL: {
+            WorkflowState.PUBLISHING,
+            WorkflowState.COMPLETED,
+            WorkflowState.FAILED,
+        },
+        WorkflowState.PUBLISHING: {
+            WorkflowState.COMPLETED,
+            WorkflowState.AWAITING_PUBLISH_APPROVAL,
             WorkflowState.FAILED,
         },
         WorkflowState.COMPLETED: set(),  # Terminal state
         WorkflowState.FAILED: {
             WorkflowState.IDLE,
             WorkflowState.RESEARCHING,  # Allow retry
+            WorkflowState.PUBLISHING,  # Allow retry
         },
     }
 

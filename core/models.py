@@ -39,6 +39,8 @@ class WorkflowState(str, Enum):
     STYLING = "STYLING"
     AWAITING_STYLE_APPROVAL = "AWAITING_STYLE_APPROVAL"
     ANIMATING = "ANIMATING"
+    AWAITING_PUBLISH_APPROVAL = "AWAITING_PUBLISH_APPROVAL"
+    PUBLISHING = "PUBLISHING"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
 
@@ -327,6 +329,9 @@ class ProjectSession(BaseModel):
     final_video_path: str | None = Field(
         default=None, description="Path to assembled final MP4 video"
     )
+    youtube_url: str | None = Field(
+        default=None, description="Published YouTube video URL"
+    )
     error_message: str | None = Field(
         default=None, description="Error message if workflow failed"
     )
@@ -390,4 +395,21 @@ class ProjectUsageSummary(BaseModel):
     components: list[ComponentUsage] = Field(
         default_factory=list,
         description="Per-component breakdown of resource usage and cost",
+    )
+
+
+class YouTubePublishResult(BaseModel):
+    """Result of publishing a video to YouTube."""
+
+    video_id: str = Field(description="Unique YouTube video identifier")
+    video_url: str = Field(
+        description="Direct URL to the published YouTube video or Short"
+    )
+    title: str = Field(description="Published video title")
+    privacy_status: str = Field(
+        default="public", description="Video privacy status (public, unlisted, private)"
+    )
+    is_short: bool = Field(
+        default=False,
+        description="Whether the video was published as a vertical YouTube Short",
     )

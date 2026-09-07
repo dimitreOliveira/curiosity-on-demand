@@ -86,10 +86,18 @@ async def test_database_crud_lifecycle(
     assert len(updated_sb.storyboard.scenes) == 3
     assert updated_sb.final_video_path == "/tmp/final.mp4"
 
+    # 9. Save YouTube URL
+    updated_yt = await memory_db.save_youtube_url(
+        project.project_id,
+        "https://youtu.be/sample_yt_id",
+    )
+    assert updated_yt is not None
+    assert updated_yt.youtube_url == "https://youtu.be/sample_yt_id"
+
 
 @pytest.mark.asyncio
 async def test_state_machine_valid_transitions(memory_db):
-    """Test valid sequential state transitions through research, scripting, narration, and animation."""
+    """Test valid sequential state transitions through research, scripting, narration, animation, and YouTube publishing."""
     sm = PipelineStateMachine(db=memory_db)
     project = await memory_db.create_project(
         user_id=1, chat_id=1, topic="Deep Sea Creatures"
@@ -163,9 +171,41 @@ async def test_state_machine_valid_transitions(memory_db):
     p7 = await sm.transition(project.project_id, WorkflowState.ANIMATING)
     assert p7.state == WorkflowState.ANIMATING
 
-    # ANIMATING -> COMPLETED (Finalization)
-    p8 = await sm.transition(project.project_id, WorkflowState.COMPLETED)
-    assert p8.state == WorkflowState.COMPLETED
+    # ANIMATING -> AWAITING_PUBLISH_APPROVAL (Video ready, prompt for publish)
+    p8 = await sm.transition(
+        project.project_id, WorkflowState.AWAITING_PUBLISH_APPROVAL
+    )
+    assert p8.state == WorkflowState.AWAITING_PUBLISH_APPROVAL
+
+    # AWAITING_PUBLISH_APPROVAL -> PUBLISHING (User approves publishing)
+    p9 = await sm.transition(project.project_id, WorkflowState.PUBLISHING)
+    assert p9.state == WorkflowState.PUBLISHING
+
+    # PUBLISHING -> COMPLETED (Video live on YouTube)
+    p10 = await sm.transition(project.project_id, WorkflowState.COMPLETED)
+    assert p10.state == WorkflowState.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_state_machine_publish_skip_transition(memory_db):
+    """Test skipping YouTube publishing transitions directly from AWAITING_PUBLISH_APPROVAL to COMPLETED."""
+    sm = PipelineStateMachine(db=memory_db)
+    project = await memory_db.create_project(
+        user_id=1, chat_id=1, topic="Skip Publish Test"
+    )
+
+    await sm.transition(project.project_id, WorkflowState.RESEARCHING)
+    await sm.transition(project.project_id, WorkflowState.AWAITING_RESEARCH_APPROVAL)
+    await sm.transition(project.project_id, WorkflowState.SCRIPTING)
+    await sm.transition(project.project_id, WorkflowState.AWAITING_SCRIPT_APPROVAL)
+    await sm.transition(project.project_id, WorkflowState.STYLING)
+    await sm.transition(project.project_id, WorkflowState.AWAITING_STYLE_APPROVAL)
+    await sm.transition(project.project_id, WorkflowState.ANIMATING)
+    await sm.transition(project.project_id, WorkflowState.AWAITING_PUBLISH_APPROVAL)
+
+    # Skip publishing
+    p_comp = await sm.transition(project.project_id, WorkflowState.COMPLETED)
+    assert p_comp.state == WorkflowState.COMPLETED
 
 
 @pytest.mark.asyncio

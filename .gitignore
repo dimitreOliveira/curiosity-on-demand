@@ -211,3 +211,4 @@ __marimo__/
 
 # Local storage and database artifacts
 storage/
+client_secrets*.json

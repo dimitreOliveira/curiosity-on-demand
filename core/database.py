@@ -68,6 +68,7 @@ class ProjectRecord(Base):
     sample_audio_path: Mapped[str | None] = mapped_column(String(256), nullable=True)
     final_audio_path: Mapped[str | None] = mapped_column(String(256), nullable=True)
     final_video_path: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    youtube_url: Mapped[str | None] = mapped_column(String(256), nullable=True)
 
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
@@ -132,6 +133,7 @@ class ProjectRecord(Base):
             sample_audio_path=self.sample_audio_path,
             final_audio_path=self.final_audio_path,
             final_video_path=self.final_video_path,
+            youtube_url=self.youtube_url,
             error_message=self.error_message,
             created_at=self.created_at.isoformat()
             if self.created_at
@@ -242,6 +244,10 @@ class DatabaseManager:
                         text(
                             "ALTER TABLE projects ADD COLUMN project_folder VARCHAR(256)"
                         )
+                    )
+                if "youtube_url" not in columns:
+                    await conn.execute(
+                        text("ALTER TABLE projects ADD COLUMN youtube_url VARCHAR(256)")
                     )
 
     async def create_project(
@@ -422,6 +428,23 @@ class DatabaseManager:
             record.storyboard_json = storyboard.model_dump_json()
             if final_video_path is not None:
                 record.final_video_path = final_video_path
+            record.updated_at = datetime.now(UTC)
+            await session.commit()
+            return record.to_session()
+
+    async def save_youtube_url(
+        self,
+        project_id: str,
+        youtube_url: str,
+    ) -> ProjectSession | None:
+        """Persist published YouTube video URL."""
+        async with self.session_factory() as session:
+            stmt = select(ProjectRecord).where(ProjectRecord.project_id == project_id)
+            result = await session.execute(stmt)
+            record = result.scalar_one_or_none()
+            if not record:
+                return None
+            record.youtube_url = youtube_url
             record.updated_at = datetime.now(UTC)
             await session.commit()
             return record.to_session()

@@ -180,6 +180,85 @@ class Settings(BaseSettings):
             return res
         return []
 
+    # YouTube Publishing Configuration
+    youtube_client_id: str = Field(
+        default="",
+        alias="YOUTUBE_CLIENT_ID",
+        description="Google OAuth 2.0 Client ID for YouTube Data API",
+    )
+    youtube_client_secret: str = Field(
+        default="",
+        alias="YOUTUBE_CLIENT_SECRET",
+        description="Google OAuth 2.0 Client Secret for YouTube Data API",
+    )
+    youtube_refresh_token: str = Field(
+        default="",
+        alias="YOUTUBE_REFRESH_TOKEN",
+        description="Google OAuth 2.0 Refresh Token for headless YouTube publishing",
+    )
+    youtube_token_file: Path = Field(
+        default=Path("storage/youtube_token.json"),
+        alias="YOUTUBE_TOKEN_FILE",
+        description="Path to stored OAuth credentials/token JSON file",
+    )
+    youtube_client_secrets_file: Path | None = Field(
+        default=None,
+        alias="YOUTUBE_CLIENT_SECRETS_FILE",
+        description="Optional path to client_secrets.json for interactive OAuth authentication flow",
+    )
+
+    @field_validator("youtube_client_secrets_file", mode="before")
+    @classmethod
+    def _parse_optional_path(cls, v: Any) -> Path | None:
+        if not v or (isinstance(v, str) and not v.strip()):
+            return None
+        return Path(v)
+
+    @field_validator("youtube_token_file", mode="before")
+    @classmethod
+    def _parse_token_path(cls, v: Any) -> Path:
+        if not v or (isinstance(v, str) and not v.strip()):
+            return Path("storage/youtube_token.json")
+        return Path(v)
+
+    youtube_default_privacy_status: str = Field(
+        default="public",
+        alias="YOUTUBE_DEFAULT_PRIVACY_STATUS",
+        description="Default video privacy status (public, unlisted, private)",
+    )
+    youtube_default_category_id: str = Field(
+        default="27",
+        alias="YOUTUBE_DEFAULT_CATEGORY_ID",
+        description="YouTube category ID (default: 27 for Education)",
+    )
+    youtube_default_tags: str | list[str] = Field(
+        default_factory=lambda: ["CuriosityOnDemand", "Education", "Animation"],
+        alias="YOUTUBE_DEFAULT_TAGS",
+        description="Default tags included when publishing to YouTube",
+    )
+
+    @field_validator("youtube_default_tags", mode="after")
+    @classmethod
+    def _parse_youtube_tags(cls, v: Any) -> list[str]:
+        if not v:
+            return ["CuriosityOnDemand", "Education", "Animation"]
+        if isinstance(v, str):
+            v = v.strip()
+            if not v:
+                return ["CuriosityOnDemand", "Education", "Animation"]
+            if v.startswith("[") and v.endswith("]"):
+                try:
+                    parsed = json.loads(v)
+                    if isinstance(parsed, list):
+                        return [str(x).strip() for x in parsed if str(x).strip()]
+                except json.JSONDecodeError:
+                    pass
+            parts = [p.strip() for p in v.split(",") if p.strip()]
+            return parts or ["CuriosityOnDemand", "Education", "Animation"]
+        if isinstance(v, (list, tuple, set)):
+            return [str(item).strip() for item in v if str(item).strip()]
+        return ["CuriosityOnDemand", "Education", "Animation"]
+
     # Storage and Output Paths
     storage_dir: Path = Field(
         default=Path("storage"),
