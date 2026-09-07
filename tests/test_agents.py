@@ -212,6 +212,11 @@ def test_parse_duration_to_seconds():
     assert parse_duration_to_seconds("3-min") == 180
     assert parse_duration_to_seconds("45-second") == 45
     assert parse_duration_to_seconds("60-sec") == 60
+    assert parse_duration_to_seconds("1:30") == 90
+    assert parse_duration_to_seconds("1m 30s") == 90
+    assert parse_duration_to_seconds("1 min 30 sec") == 90
+    assert parse_duration_to_seconds("0:45") == 45
+    assert parse_duration_to_seconds("2:00") == 120
     assert parse_duration_to_seconds("unknown", default_seconds=300) == 300
     assert parse_duration_to_seconds("", default_seconds=600) == 600
 

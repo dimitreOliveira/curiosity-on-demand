@@ -758,7 +758,7 @@ class AnimationRenderer:
         self,
         video_path: Path,
         output_path: Path,
-        max_duration_seconds: float = 180.0,
+        max_duration_seconds: float = 60.0,
         max_file_size_bytes: int = 49 * 1024 * 1024,
         fps: int = 30,
     ) -> Path:

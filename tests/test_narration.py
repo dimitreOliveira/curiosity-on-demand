@@ -148,6 +148,32 @@ async def test_narration_planner_raises_on_empty_response(mock_settings, sample_
         await planner.plan_narration(script=sample_script)
 
 
+@pytest.mark.asyncio
+async def test_narration_planner_minimizes_whisper_prompt(
+    mock_settings, sample_script, sample_narration_plan
+):
+    """Test that NarrationPlannerAgent instructs the model to minimize whisper tags."""
+    from agents.narration_planner import NARRATION_PLANNER_SYSTEM_PROMPT
+
+    # Verify system prompt contains whisper minimization rule
+    assert (
+        "Minimize the use of `[whisper]` / `[whispers]` tags"
+        in NARRATION_PLANNER_SYSTEM_PROMPT
+    )
+    assert "Whisper Tag Rule (IMPORTANT)" in NARRATION_PLANNER_SYSTEM_PROMPT
+
+    planner = NarrationPlannerAgent(settings=mock_settings)
+    mock_response = MagicMock()
+    mock_response.parsed = sample_narration_plan
+    planner.client.aio.models.generate_content = AsyncMock(return_value=mock_response)
+
+    await planner.plan_narration(script=sample_script)
+
+    call_args = planner.client.aio.models.generate_content.call_args
+    prompt_sent = call_args.kwargs["contents"]
+    assert "Minimize whisper tags ([whisper]/[whispers])" in prompt_sent
+
+
 # ---------------------------------------------------------------------------
 # 3. NarrationGeneratorAgent Tests
 # ---------------------------------------------------------------------------

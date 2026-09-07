@@ -165,7 +165,7 @@ async def test_scene_animator_animate_scene_vertical(
         "<html>\n"
         "<head><style>body { margin: 0; }</style></head>\n"
         "<body>\n"
-        '<canvas id="stage" width="720" height="1280"></canvas>\n'
+        '<canvas id="stage" width="1080" height="1920"></canvas>\n'
         "<script>\n"
         "const canvas = document.getElementById('stage');\n"
         "const ctx = canvas.getContext('2d');\n"
@@ -188,13 +188,13 @@ async def test_scene_animator_animate_scene_vertical(
     )
 
     assert isinstance(result, SceneAnimation)
-    assert '<canvas id="stage" width="720" height="1280">' in result.html_content
+    assert '<canvas id="stage" width="1080" height="1920">' in result.html_content
     agent.client.aio.models.generate_content.assert_called_once()
     # Check prompt passed to generate_content
     call_args = agent.client.aio.models.generate_content.call_args
     prompt_used = call_args[1].get("contents", "")
     assert "9:16 Vertical Portrait" in prompt_used
-    assert "720x1280" in prompt_used
+    assert "1080x1920" in prompt_used
 
 
 @pytest.mark.asyncio
@@ -231,7 +231,7 @@ async def test_scene_animator_animate_storyboard_vertical(
     mock_anim = SceneAnimation(
         scene_number=1,
         title="Scene 1",
-        html_content="<!DOCTYPE html><html><body><canvas width='720' height='1280'></canvas></body></html>",
+        html_content="<!DOCTYPE html><html><body><canvas width='1080' height='1920'></canvas></body></html>",
         duration_seconds=30,
     )
     agent.animate_scene = AsyncMock(return_value=mock_anim)
@@ -248,5 +248,5 @@ async def test_scene_animator_animate_storyboard_vertical(
     # Verify vertical dimensions were passed down
     call_kwargs = agent.animate_scene.call_args_list[0][1]
     assert call_kwargs["is_vertical"] is True
-    assert call_kwargs["width"] == 720
-    assert call_kwargs["height"] == 1280
+    assert call_kwargs["width"] == 1080
+    assert call_kwargs["height"] == 1920

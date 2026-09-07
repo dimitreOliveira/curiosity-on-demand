@@ -65,22 +65,22 @@ class Settings(BaseSettings):
         description="Default voice name for Gemini speech generation",
     )
     video_width: int = Field(
-        default=1280,
+        default=1920,
         alias="VIDEO_WIDTH",
         description="Rendered horizontal video width in pixels",
     )
     video_height: int = Field(
-        default=720,
+        default=1080,
         alias="VIDEO_HEIGHT",
         description="Rendered horizontal video height in pixels",
     )
     vertical_video_width: int = Field(
-        default=720,
+        default=1080,
         alias="VERTICAL_VIDEO_WIDTH",
         description="Rendered vertical video width in pixels (YouTube Shorts style)",
     )
     vertical_video_height: int = Field(
-        default=1280,
+        default=1920,
         alias="VERTICAL_VIDEO_HEIGHT",
         description="Rendered vertical video height in pixels (YouTube Shorts style)",
     )
@@ -142,9 +142,19 @@ class Settings(BaseSettings):
         description="Maximum video size in MB allowed for Telegram upload (standard limit is 50MB)",
     )
     telegram_preview_max_duration_seconds: float = Field(
-        default=180.0,
+        default=60.0,
         alias="TELEGRAM_PREVIEW_MAX_DURATION_SECONDS",
         description="Maximum duration in seconds for video preview sent via Telegram when full video exceeds limits",
+    )
+    telegram_upload_timeout_seconds: float = Field(
+        default=300.0,
+        alias="TELEGRAM_UPLOAD_TIMEOUT_SECONDS",
+        description="Timeout in seconds for Telegram media uploads (video, audio, photo)",
+    )
+    telegram_request_timeout_seconds: float = Field(
+        default=60.0,
+        alias="TELEGRAM_REQUEST_TIMEOUT_SECONDS",
+        description="Default timeout in seconds for standard Telegram API requests",
     )
 
     @field_validator("telegram_allowed_users", mode="after")

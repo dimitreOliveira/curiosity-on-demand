@@ -44,9 +44,10 @@ Gemini TTS supports 30 expressive prebuilt voices. Choose the voice that best co
 5. **Scene-by-Scene Enhanced Narration with Audio Tags (CRITICAL):**
    - For every scene in the script, you MUST produce `enhanced_narration` which retains the script's exact spoken words, but modifies it with inline audio tags enclosed in square brackets.
    - Use audio tags creatively and judiciously to direct emotional shifts, pace changes, emphasis, and non-verbal reactions:
-     * Tone tags: `[curious]`, `[excitedly]`, `[amazed]`, `[serious]`, `[whispers]`, `[intrigued]`, `[dramatic pause]`, `[warmly]`, `[reluctantly]`
+     * Tone tags: `[curious]`, `[excitedly]`, `[amazed]`, `[serious]`, `[intrigued]`, `[dramatic pause]`, `[warmly]`, `[thoughtful]`, `[reluctantly]`
      * Energy tags: `[very fast]`, `[slowly]`, `[shouting]`, `[breathless]`
      * Non-verbal sounds: `[gasp]`, `[sighs]`, `[chuckles]`, `[clears throat]`
+   - **Whisper Tag Rule (IMPORTANT):** Minimize the use of `[whisper]` / `[whispers]` tags. In text-to-speech synthesis, whispering often sounds muffled, unclear, or unnatural in practice. DO NOT use `[whispers]` casually or as a default introductory tone. ONLY use `[whisper]` when the context makes a quiet whisper strictly necessary and genuinely compelling (e.g. sharing a confidential secret or a hushed dramatic mystery). Favor clear, expressive tags like `[curious]`, `[intrigued]`, `[thoughtful]`, or `[dramatic pause]` instead.
    - Provide scene-specific `tone`, `pace`, and `scene_directors_notes` for each segment.
 """
 
@@ -112,7 +113,9 @@ class NarrationPlannerAgent(BaseAgent):
                 f"{feedback}\n\n"
                 f"Please update the NarrationPlan according to the user's feedback. "
                 f"Adjust voice choice, performance style, scene descriptions, and inline audio tags "
-                f"across all {len(script.scenes)} scenes to fulfill the request."
+                f"across all {len(script.scenes)} scenes to fulfill the request. "
+                f"Remember to minimize whisper tags ([whisper]/[whispers]), reserving them only for when "
+                f"a quiet whisper makes profound sense."
             )
         else:
             prompt = (
@@ -120,8 +123,10 @@ class NarrationPlannerAgent(BaseAgent):
                 f"Please formulate the ideal NarrationPlan for the educational video topic '{effective_topic}'. "
                 f"Select the best voice from the 30 supported Gemini TTS voices, define a compelling "
                 f"character persona, craft atmospheric scene notes, and embed natural, expressive "
-                f"audio tags (e.g. [excitedly], [whispers], [amazed], [gasp], [curious], [very fast]) "
-                f"into each scene's enhanced narration. Ensure each scene maintains the core script words."
+                f"audio tags (e.g. [excitedly], [amazed], [gasp], [curious], [thoughtful], [very fast]) "
+                f"into each scene's enhanced narration. Minimize whisper tags ([whisper]/[whispers]), "
+                f"only using them when the scene context makes a quiet whisper strictly necessary. "
+                f"Ensure each scene maintains the core script words."
             )
 
         if voice_name:

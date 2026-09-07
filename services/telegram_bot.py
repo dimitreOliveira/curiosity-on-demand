@@ -13,7 +13,7 @@ from telegram import (
     Update,
 )
 from telegram.constants import ParseMode
-from telegram.error import TelegramError
+from telegram.error import BadRequest, NetworkError, TelegramError, TimedOut
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -58,9 +58,37 @@ logger = logging.getLogger(__name__)
 
 def extract_target_duration(text: str, default_minutes: int = 10) -> str:
     """Extract requested video duration from topic string, or default to configured duration."""
+    # Match MM:SS or M:SS e.g. "1:30", "01:30", "2:45 min", "1:30 minute video", "0:45"
+    mmss_match = re.search(r"(?:^|[^\w:])(\d{1,2}):(\d{2})(?!\d)", text)
+    if mmss_match:
+        m, s = int(mmss_match.group(1)), int(mmss_match.group(2))
+        total_sec = m * 60 + s
+        if total_sec > 0:
+            if total_sec < 60:
+                return f"{total_sec} seconds"
+            if s == 0:
+                return f"{m} minutes"
+            return f"{m}m {s:02d}s"
+
+    # Match composite min + sec e.g. "1m 30s", "1 min 30 sec", "1m30s"
+    min_sec_match = re.search(
+        r"(?<!:)\b(\d+)\s*(?:minutes?|mins?|m)\s*(\d+)\s*(?:seconds?|secs?|s)\b",
+        text,
+        re.IGNORECASE,
+    )
+    if min_sec_match:
+        m, s = int(min_sec_match.group(1)), int(min_sec_match.group(2))
+        total_sec = m * 60 + s
+        if total_sec < 60:
+            return f"{total_sec} seconds"
+        if s == 0:
+            return f"{m} minutes"
+        return f"{m}m {s:02d}s"
+
     # Match minutes e.g. "5 min", "3-minute", "15 minutes", "2m", "3-min"
+    # Note (?<!:) prevents matching the seconds part of 1:30
     min_match = re.search(
-        r"\b(\d+(?:\.\d+)?)[-\s]*(?:minutes?|mins?|m)\b", text, re.IGNORECASE
+        r"(?<!:)\b(\d+(?:\.\d+)?)[-\s]*(?:minutes?|mins?|m)\b", text, re.IGNORECASE
     )
     if min_match:
         val = min_match.group(1)
@@ -69,7 +97,7 @@ def extract_target_duration(text: str, default_minutes: int = 10) -> str:
 
     # Match seconds e.g. "30s", "45 seconds", "90 sec", "45-second"
     sec_match = re.search(
-        r"\b(\d+(?:\.\d+)?)[-\s]*(?:seconds?|secs?|s)\b", text, re.IGNORECASE
+        r"(?<!:)\b(\d+(?:\.\d+)?)[-\s]*(?:seconds?|secs?|s)\b", text, re.IGNORECASE
     )
     if sec_match:
         val = sec_match.group(1)
@@ -77,6 +105,62 @@ def extract_target_duration(text: str, default_minutes: int = 10) -> str:
         return f"{val_str} seconds"
 
     return f"~{default_minutes} minutes"
+
+
+def split_message_chunks(text: str, max_chars: int = 4000) -> list[str]:
+    """Split long message text into clean chunks bounded by max_chars.
+
+    Prefers splitting cleanly at paragraph breaks (\\n\\n), then line breaks (\\n),
+    preventing mid-entity markdown truncation whenever possible.
+    """
+    if len(text) <= max_chars:
+        return [text]
+
+    paragraphs = text.split("\n\n")
+    chunks: list[str] = []
+    current_chunk = ""
+
+    for para in paragraphs:
+        candidate = f"{current_chunk}\n\n{para}" if current_chunk else para
+        if len(candidate) <= max_chars:
+            current_chunk = candidate
+            continue
+
+        if current_chunk:
+            chunks.append(current_chunk)
+            current_chunk = ""
+
+        if len(para) <= max_chars:
+            current_chunk = para
+            continue
+
+        lines = para.split("\n")
+        for line in lines:
+            line_candidate = f"{current_chunk}\n{line}" if current_chunk else line
+            if len(line_candidate) <= max_chars:
+                current_chunk = line_candidate
+                continue
+
+            if current_chunk:
+                chunks.append(current_chunk)
+                current_chunk = ""
+
+            if len(line) <= max_chars:
+                current_chunk = line
+                continue
+
+            # Hard fallback: slice line in increments of max_chars
+            for k in range(0, len(line), max_chars):
+                sub = line[k : k + max_chars]
+                if k + max_chars < len(line):
+                    chunks.append(sub)
+                else:
+                    current_chunk = sub
+
+    if current_chunk:
+        chunks.append(current_chunk)
+
+    return chunks if chunks else [text]
 
 
 class TelegramBotService:
@@ -152,6 +236,11 @@ class TelegramBotService:
         app = (
             Application.builder()
             .token(self.settings.telegram_bot_token)
+            .connect_timeout(30.0)
+            .read_timeout(float(self.settings.telegram_request_timeout_seconds))
+            .write_timeout(float(self.settings.telegram_request_timeout_seconds))
+            .pool_timeout(30.0)
+            .media_write_timeout(float(self.settings.telegram_upload_timeout_seconds))
             .post_init(self._post_init)
             .build()
         )
@@ -684,28 +773,40 @@ class TelegramBotService:
         text: str,
         reply_markup: InlineKeyboardMarkup | None = None,
     ) -> None:
-        """Send message to chat, chunking if exceeding Telegram's 4096 character limit."""
+        """Send message to chat, chunking cleanly if exceeding Telegram's character limit.
+
+        Splits at paragraph or newline boundaries to preserve formatting entities,
+        and falls back to plain text if Markdown entity parsing fails.
+        """
         if not self.app:
             return
 
-        if len(text) <= 4000:
-            await self.app.bot.send_message(
-                chat_id=chat_id,
-                text=text,
-                reply_markup=reply_markup,
-                parse_mode=ParseMode.MARKDOWN,
-            )
-            return
-
-        chunks = [text[i : i + 4000] for i in range(0, len(text), 4000)]
+        chunks = split_message_chunks(text, max_chars=4000)
         for i, chunk in enumerate(chunks):
             is_last = i == len(chunks) - 1
-            await self.app.bot.send_message(
-                chat_id=chat_id,
-                text=chunk,
-                reply_markup=reply_markup if is_last else None,
-                parse_mode=ParseMode.MARKDOWN,
-            )
+            markup = reply_markup if is_last else None
+            try:
+                await self.app.bot.send_message(
+                    chat_id=chat_id,
+                    text=chunk,
+                    reply_markup=markup,
+                    parse_mode=ParseMode.MARKDOWN,
+                )
+            except BadRequest as bad_req:
+                err_msg = str(bad_req).lower()
+                if "can't parse entities" in err_msg or "entity" in err_msg:
+                    logger.warning(
+                        "Telegram Markdown entity parsing failed for message chunk (%s). Falling back to plain text.",
+                        bad_req,
+                    )
+                    await self.app.bot.send_message(
+                        chat_id=chat_id,
+                        text=chunk,
+                        reply_markup=markup,
+                        parse_mode=None,
+                    )
+                else:
+                    raise
 
     async def _send_research_results(
         self, chat_id: int, report: ResearchReport, project_id: str
@@ -937,12 +1038,15 @@ class TelegramBotService:
         audio_path = Path(sample_audio.audio_path)
         if self.app and audio_path.exists():
             audio_bytes = audio_path.read_bytes()
+            media_timeout = float(self.settings.telegram_upload_timeout_seconds)
             try:
                 await self.app.bot.send_voice(
                     chat_id=chat_id,
                     voice=audio_bytes,
                     caption=f"🎙️ *Scene 1 Voice Preview* ({sample_audio.duration_seconds:.1f}s)",
                     parse_mode=ParseMode.MARKDOWN,
+                    read_timeout=media_timeout,
+                    write_timeout=media_timeout,
                 )
             except (TelegramError, OSError):
                 try:
@@ -953,6 +1057,8 @@ class TelegramBotService:
                         performer=plan.audio_profile_name,
                         caption=f"🎙️ *Scene 1 Voice Preview* ({sample_audio.duration_seconds:.1f}s)",
                         parse_mode=ParseMode.MARKDOWN,
+                        read_timeout=media_timeout,
+                        write_timeout=media_timeout,
                     )
                 except (TelegramError, OSError) as send_err:
                     logger.warning("Could not send audio preview message: %s", send_err)
@@ -1077,8 +1183,8 @@ class TelegramBotService:
         sample_frame_path: Path,
         project_id: str,
         is_vertical: bool = False,
-        width: int = 1280,
-        height: int = 720,
+        width: int = 1920,
+        height: int = 1080,
     ) -> None:
         """Send formatted style overview and rendered Scene 1 sample image to chat."""
         if not self.app:
@@ -1112,6 +1218,7 @@ class TelegramBotService:
         if sample_frame_path.exists() and sample_frame_path.stat().st_size > 0:
             try:
                 photo_bytes = sample_frame_path.read_bytes()
+                media_timeout = float(self.settings.telegram_upload_timeout_seconds)
                 # Telegram photo captions have a 1024 character limit
                 if len(caption) <= 1024:
                     await self.app.bot.send_photo(
@@ -1120,6 +1227,8 @@ class TelegramBotService:
                         caption=caption,
                         reply_markup=reply_markup,
                         parse_mode=ParseMode.MARKDOWN,
+                        read_timeout=media_timeout,
+                        write_timeout=media_timeout,
                     )
                     return
                 else:
@@ -1129,6 +1238,8 @@ class TelegramBotService:
                         photo=photo_bytes,
                         caption=f"🎨 *Scene 1 Sample Frame: {style.style_name}*",
                         parse_mode=ParseMode.MARKDOWN,
+                        read_timeout=media_timeout,
+                        write_timeout=media_timeout,
                     )
             except Exception as photo_err:  # noqa: BLE001
                 logger.warning(
@@ -1425,14 +1536,44 @@ class TelegramBotService:
                     caption = "\n".join(caption_lines)
 
                     video_bytes = video_to_send.read_bytes()
-                    await self.app.bot.send_video(
-                        chat_id=session.chat_id,
-                        video=video_bytes,
-                        caption=caption,
-                        width=video_width,
-                        height=video_height,
-                        parse_mode=ParseMode.MARKDOWN,
+                    upload_timeout = float(
+                        self.settings.telegram_upload_timeout_seconds
                     )
+                    max_send_attempts = 2
+                    last_send_err: Exception | None = None
+
+                    for attempt in range(1, max_send_attempts + 1):
+                        try:
+                            await self.app.bot.send_video(
+                                chat_id=session.chat_id,
+                                video=video_bytes,
+                                caption=caption,
+                                width=video_width,
+                                height=video_height,
+                                parse_mode=ParseMode.MARKDOWN,
+                                supports_streaming=True,
+                                read_timeout=upload_timeout,
+                                write_timeout=upload_timeout,
+                            )
+                            last_send_err = None
+                            break
+                        except (TimedOut, NetworkError) as net_err:
+                            last_send_err = net_err
+                            logger.warning(
+                                "Attempt %d/%d to send video to Telegram failed for project %s: %s",
+                                attempt,
+                                max_send_attempts,
+                                project_id,
+                                net_err,
+                            )
+                            if attempt < max_send_attempts:
+                                await asyncio.sleep(2.0)
+                        except Exception as non_net_err:  # noqa: BLE001
+                            last_send_err = non_net_err
+                            break
+
+                    if last_send_err is not None:
+                        raise last_send_err
 
                     # Send detailed generation cost & token breakdown message
                     await self.app.bot.send_message(
