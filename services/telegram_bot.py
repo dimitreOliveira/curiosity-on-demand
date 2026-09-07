@@ -5,7 +5,13 @@ import logging
 import re
 from pathlib import Path
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Message, Update
+from telegram import (
+    BotCommand,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+    Update,
+)
 from telegram.constants import ParseMode
 from telegram.error import TelegramError
 from telegram.ext import (
@@ -143,7 +149,12 @@ class TelegramBotService:
                 "TELEGRAM_BOT_TOKEN is not configured in environment or .env"
             )
 
-        app = Application.builder().token(self.settings.telegram_bot_token).build()
+        app = (
+            Application.builder()
+            .token(self.settings.telegram_bot_token)
+            .post_init(self._post_init)
+            .build()
+        )
 
         # Command Handlers
         app.add_handler(CommandHandler("start", self._handle_start))
@@ -161,6 +172,26 @@ class TelegramBotService:
 
         self.app = app
         return app
+
+    async def _post_init(self, application: Application) -> None:
+        """Post-init hook invoked by PTB to configure commands."""
+        await self.setup_bot_commands()
+
+    async def setup_bot_commands(self) -> None:
+        """Register bot commands menu with Telegram for native auto-complete."""
+        if not self.app or not self.app.bot:
+            return
+        commands = [
+            BotCommand("start", "Welcome message & pipeline overview"),
+            BotCommand("help", "Detailed guide & usage instructions"),
+            BotCommand("status", "Check active project status"),
+            BotCommand("cancel", "Cancel current active project"),
+        ]
+        try:
+            await self.app.bot.set_my_commands(commands)
+            logger.info("Telegram bot commands registered successfully.")
+        except (TelegramError, RuntimeError, OSError) as exc:
+            logger.warning("Failed to register bot commands with Telegram: %s", exc)
 
     # ==========================================================================
     # Command Handlers
@@ -182,12 +213,17 @@ class TelegramBotService:
 
         welcome_text = (
             "✨ *Welcome to Curiosity On Demand!* ✨\n\n"
-            "Send me any topic or curiosity, and our AI agents will:\n"
-            "1. 🔍 Conduct in-depth, grounded web research.\n"
-            "2. 📋 Present a structured summary for your review and feedback.\n"
-            "3. ✍️ Write a scene-by-scene narration script.\n"
-            "4. 🎬 Let you review and refine the script.\n\n"
-            "👉 *Send a topic to get started!* (e.g. `How do black holes evaporate? (5 min video)`)"
+            "Curiosity On Demand turns any curiosity into an educational animated video with synchronized AI voiceover:\n\n"
+            "1. 🔍 *Grounded Research:* In-depth web research using Gemini with Google Search.\n"
+            "2. 📋 *Concept Review:* Review findings and approve or request adjustments.\n"
+            "3. ✍️ *Scene Scripting:* Scene-by-scene narration script synthesis.\n"
+            "4. 🎙️ *Voice Direction:* Voice talent planning & Gemini TTS audio preview.\n"
+            "5. 🎨 *Visual Styling:* Animation art direction & rendered scene frame preview.\n"
+            "6. 🎬 *Full Rendering:* Canvas/SVG animations rendered to master MP4 video.\n"
+            "7. 🚀 *YouTube Publishing:* One-click publish to your YouTube channel as video or Shorts.\n\n"
+            "👉 *Send a topic to get started!*\n"
+            "_(e.g. `How do black holes evaporate? (2 min short)` or `Quantum computing explained (5 min)`)_\n\n"
+            "💡 _Tip: Videos ≤ 2 minutes automatically generate in vertical 9:16 format for YouTube Shorts!_"
         )
         await update.effective_chat.send_message(
             welcome_text, parse_mode=ParseMode.MARKDOWN
@@ -200,11 +236,19 @@ class TelegramBotService:
         if not update.effective_chat:
             return
         help_text = (
-            "📖 *Curiosity On Demand - Help & Commands*\n\n"
-            "• Type any topic (with optional target duration like `5 min`) to start research.\n"
-            "• When reviewing research or script summaries, click *Approve* or reply with your feedback.\n"
-            "• `/status` - Check the status of your active project.\n"
-            "• `/cancel` - Cancel your ongoing project.\n"
+            "📖 *Curiosity On Demand - Help & Guide*\n\n"
+            "*How It Works:*\n"
+            "• *Start a Project:* Send any curiosity or educational topic. You can specify a duration like `2m short` or `5 min`.\n"
+            "• *Format:* Videos ≤ 2 minutes are automatically rendered in vertical 9:16 format (Shorts style); longer videos use 16:9 widescreen.\n"
+            "• *Human-in-the-Loop Review:* At each stage, click *Approve* to advance or reply with text to refine:\n"
+            "  1. *Research summary* — review facts, concepts, and storytelling angles.\n"
+            "  2. *Narration script* — review scene breakdown and spoken script.\n"
+            "  3. *Voice sample* — listen to TTS audio preview and adjust tone/voice.\n"
+            "  4. *Visual style frame* — review rendered frame snapshot and color palette.\n"
+            "  5. *Final video* — receive MP4 preview & publish to YouTube with one tap.\n\n"
+            "*Commands:*\n"
+            "• `/status` - Check active project progress, stage, and resource costs.\n"
+            "• `/cancel` - Cancel the current active project.\n"
             "• `/help` - Show this guide."
         )
         await update.effective_chat.send_message(
