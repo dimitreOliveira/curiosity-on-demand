@@ -269,6 +269,56 @@ class YouTubePublisher:
 
         return title, description, tags
 
+    def _upload_captions_sync(
+        self,
+        youtube: object,
+        video_id: str,
+        captions_path: Path,
+        language: str = "en",
+        name: str = "English",
+    ) -> bool:
+        """Upload a synchronized .srt subtitle track to an existing YouTube video."""
+        if not captions_path.exists() or captions_path.stat().st_size == 0:
+            return False
+
+        try:
+            captions_resource = getattr(youtube, "captions", None)
+            if captions_resource is None:
+                return False
+
+            body = {
+                "snippet": {
+                    "videoId": video_id,
+                    "language": language,
+                    "name": name,
+                    "isDraft": False,
+                }
+            }
+            media = MediaFileUpload(
+                str(captions_path),
+                mimetype="application/x-subrip",
+                resumable=False,
+            )
+            request = captions_resource().insert(
+                part="snippet",
+                body=body,
+                media_body=media,
+            )
+            request.execute()
+            logger.info(
+                "Successfully uploaded SRT captions (%s) for YouTube video ID %s",
+                captions_path.name,
+                video_id,
+            )
+            return True
+        except Exception as cap_err:  # noqa: BLE001
+            logger.warning(
+                "Could not upload SRT captions to YouTube for video %s (video upload succeeded): %s",
+                video_id,
+                cap_err,
+            )
+            return False
+
     def _upload_video_sync(
         self,
         video_path: Path,
@@ -278,8 +328,9 @@ class YouTubePublisher:
         category_id: str,
         privacy_status: str,
         is_vertical: bool,
+        captions_path: Path | None = None,
     ) -> YouTubePublishResult:
-        """Synchronous method to upload video with resumable chunks."""
+        """Synchronous method to upload video with resumable chunks and optional SRT captions."""
         if not video_path.exists():
             raise FileNotFoundError(f"Video file not found at: {video_path}")
 
@@ -337,10 +388,19 @@ class YouTubePublisher:
         else:
             video_url = f"https://youtu.be/{video_id}"
 
+        captions_uploaded = False
+        if captions_path is not None and captions_path.exists():
+            captions_uploaded = self._upload_captions_sync(
+                youtube=youtube,
+                video_id=video_id,
+                captions_path=captions_path,
+            )
+
         logger.info(
-            "Successfully published video to YouTube! ID: %s, URL: %s",
+            "Successfully published video to YouTube! ID: %s, URL: %s (captions=%s)",
             video_id,
             video_url,
+            captions_uploaded,
         )
 
         return YouTubePublishResult(
@@ -349,6 +409,7 @@ class YouTubePublisher:
             title=title,
             privacy_status=privacy_status,
             is_short=is_vertical,
+            captions_uploaded=captions_uploaded,
         )
 
     async def publish_video(
@@ -360,9 +421,16 @@ class YouTubePublisher:
         is_vertical: bool = False,
         privacy_status: str | None = None,
         category_id: str | None = None,
+        captions_path: Path | str | None = None,
     ) -> YouTubePublishResult:
         """Asynchronously publish a video to YouTube using non-blocking thread execution."""
         v_path = Path(video_path)
+        resolved_captions: Path | None = None
+        if captions_path is not None:
+            resolved_captions = Path(captions_path)
+        elif storyboard is not None and storyboard.captions_path:
+            resolved_captions = Path(storyboard.captions_path)
+
         title, description, tags = self.format_metadata(
             topic=topic,
             script=script,
@@ -381,6 +449,7 @@ class YouTubePublisher:
             category_id=cat_id,
             privacy_status=priv_status,
             is_vertical=is_vertical,
+            captions_path=resolved_captions,
         )
 
 

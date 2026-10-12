@@ -111,8 +111,8 @@ Curiosity On Demand is an automated educational video research, scripting, narra
 - **Language & Runtime:** Python 3.12+, AsyncIO
 - **AI & LLM Grounding:** Google GenAI SDK (`google-genai` 2.0+) using `gemini-3.7-flash` / `gemini-3.8-flash` with native Google Search tool and structured JSON schemas
 - **Voiceover Speech Generation:** Gemini TTS (`gemini-3.1-flash-tts-preview`) with natural-language directorial prompts and inline emotional audio tags
-- **Animation & Rendering:** Playwright (Headless Chromium for SVG + HTML5 Canvas execution) and `imageio-ffmpeg` for MP4 video assembly and audio multiplexing
-- **YouTube Publishing:** Google YouTube Data API v3 (`google-api-python-client`, `google-auth-oauthlib`) with automatic chapter timestamps, hashtags, and Shorts format support
+- **Animation & Rendering:** Playwright (Headless Chromium for deterministic SVG + HTML5 Canvas frame-stepping) and `imageio-ffmpeg` for single-pass MP4 video encoding and audio multiplexing
+- **YouTube Publishing & Captions:** Google YouTube Data API v3 (`google-api-python-client`, `google-auth-oauthlib`) with automatic chapter timestamps, synchronized `.srt` subtitle generation and upload, hashtags, and Shorts format support
 - **Cost & Token Tracking:** Granular per-component usage logging (input/output tokens, search grounding queries, TTS audio duration, and estimated USD cost) with automatic Telegram breakdown reports
 - **Data Validation & Settings:** `pydantic` v2, `pydantic-settings`
 - **Persistence & State:** SQLAlchemy 2.0 async + SQLite (`aiosqlite`)
