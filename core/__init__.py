@@ -1,5 +1,12 @@
 """Core module exports."""
 
+from core.caption_utils import (
+    format_srt_timestamp,
+    generate_srt_content,
+    save_srt_subtitles,
+    split_text_into_caption_cues,
+    strip_audio_tags,
+)
 from core.database import Base, DatabaseManager, ProjectRecord, get_db_manager
 from core.models import (
     EvaluationResult,
@@ -35,5 +42,10 @@ __all__ = [
     "ScriptScene",
     "WorkflowState",
     "compute_project_folder",
+    "format_srt_timestamp",
+    "generate_srt_content",
     "get_db_manager",
+    "save_srt_subtitles",
+    "split_text_into_caption_cues",
+    "strip_audio_tags",
 ]

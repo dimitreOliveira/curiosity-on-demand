@@ -578,3 +578,127 @@ async def test_renderer_render_scenes_parallel_with_custom_dimensions(
     call_kwargs_1 = renderer.render_scene_video.call_args_list[0][1]
     assert call_kwargs_1["width"] == 720
     assert call_kwargs_1["height"] == 1280
+
+
+@pytest.mark.asyncio
+async def test_renderer_deterministic_frame_stepping_and_single_pass_audio(
+    mock_settings, tmp_path, sample_wav_file
+):
+    """Test _record_and_transcode injects DETERMINISTIC_TIME_SHIM, steps virtual frames, and muxes audio in a single FFmpeg pass."""
+    from unittest.mock import MagicMock
+
+    renderer = AnimationRenderer(settings=mock_settings)
+    out_video = tmp_path / "single_pass_scene.mp4"
+
+    # Mock audio duration to 0.2s at 10fps -> 2 frames
+    renderer.get_media_duration = AsyncMock(return_value=0.2)
+
+    mock_page = AsyncMock()
+    mock_page.screenshot.return_value = b"\xff\xd8\xff\xe0FakeJpegFrame"
+
+    mock_context = AsyncMock()
+    mock_context.new_page.return_value = mock_page
+
+    mock_browser = AsyncMock()
+    mock_browser.new_context.return_value = mock_context
+
+    mock_stdin = MagicMock()
+    mock_stdin.write = MagicMock()
+    mock_stdin.drain = AsyncMock()
+    mock_stdin.close = MagicMock()
+
+    mock_proc = AsyncMock()
+    mock_proc.stdin = mock_stdin
+    mock_proc.returncode = 0
+    mock_proc.communicate.return_value = (b"", b"")
+
+    executed_cmd = []
+
+    async def mock_create_subprocess(*args, **kwargs):
+        nonlocal executed_cmd
+        executed_cmd = list(args)
+        out_video.parent.mkdir(parents=True, exist_ok=True)
+        out_video.write_bytes(b"SinglePassEncodedMP4")
+        return mock_proc
+
+    with patch("asyncio.create_subprocess_exec", side_effect=mock_create_subprocess):
+        res = await renderer.render_scene_video(
+            html_content="<html><body><canvas></canvas></body></html>",
+            output_video_path=out_video,
+            duration_seconds=1.0,  # native duration 1.0s scaled to 0.2s audio
+            width=1280,
+            height=720,
+            fps=10,
+            browser=mock_browser,
+            audio_path=sample_wav_file,
+        )
+
+    assert res == out_video
+    assert out_video.exists()
+    # Virtual time shim was injected into context
+    mock_context.add_init_script.assert_called_once()
+    # 0.2s * 10 fps = 2 frames stepped deterministically
+    assert mock_page.evaluate.call_count == 2
+    assert (
+        "window.__stepVirtualFrame(0.0)" in mock_page.evaluate.call_args_list[0][0][0]
+    )
+    assert (
+        "window.__stepVirtualFrame(500.0)" in mock_page.evaluate.call_args_list[1][0][0]
+    )
+    assert mock_page.screenshot.call_count == 2
+    assert mock_stdin.write.call_count == 2
+
+    # Verify FFmpeg command used image2pipe and included the audio file in a single pass
+    cmd_str = " ".join(executed_cmd)
+    assert "-f image2pipe" in cmd_str
+    assert str(sample_wav_file.resolve()) in cmd_str
+    assert "-c:a aac" in cmd_str
+
+
+@pytest.mark.asyncio
+async def test_renderer_assemble_video_scenes_pre_muxed_skips_reencode(
+    mock_settings, tmp_path
+):
+    """Test assemble_video with scenes_pre_muxed=True concatenates directly via stream copy without calling mux_scene_audio_video."""
+    renderer = AnimationRenderer(settings=mock_settings)
+
+    scene_1 = tmp_path / "scene_1.mp4"
+    scene_1.write_bytes(b"PreMuxedScene1")
+    scene_2 = tmp_path / "scene_2.mp4"
+    scene_2.write_bytes(b"PreMuxedScene2")
+
+    audio_1 = tmp_path / "audio_1.wav"
+    audio_1.write_bytes(b"Audio1")
+    audio_2 = tmp_path / "audio_2.wav"
+    audio_2.write_bytes(b"Audio2")
+
+    out_mp4 = tmp_path / "master_pre_muxed.mp4"
+
+    renderer.mux_scene_audio_video = AsyncMock()
+
+    mock_proc = AsyncMock()
+    mock_proc.returncode = 0
+    mock_proc.communicate.return_value = (b"", b"")
+
+    executed_cmd = []
+
+    async def mock_concat(*args, **kwargs):
+        nonlocal executed_cmd
+        executed_cmd = list(args)
+        out_mp4.write_bytes(b"FastConcatMaster")
+        return mock_proc
+
+    with patch("asyncio.create_subprocess_exec", side_effect=mock_concat):
+        res = await renderer.assemble_video(
+            scene_video_paths=[scene_1, scene_2],
+            output_video_path=out_mp4,
+            scene_audio_paths=[audio_1, audio_2],
+            scenes_pre_muxed=True,
+        )
+
+    assert res == out_mp4
+    assert out_mp4.exists()
+    # Must NOT re-encode per scene when scenes_pre_muxed=True
+    renderer.mux_scene_audio_video.assert_not_called()
+    assert "-c" in executed_cmd
+    assert "copy" in executed_cmd

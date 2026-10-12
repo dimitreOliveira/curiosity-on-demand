@@ -68,6 +68,7 @@ class ProjectRecord(Base):
     sample_audio_path: Mapped[str | None] = mapped_column(String(256), nullable=True)
     final_audio_path: Mapped[str | None] = mapped_column(String(256), nullable=True)
     final_video_path: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    captions_path: Mapped[str | None] = mapped_column(String(256), nullable=True)
     youtube_url: Mapped[str | None] = mapped_column(String(256), nullable=True)
 
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -133,6 +134,8 @@ class ProjectRecord(Base):
             sample_audio_path=self.sample_audio_path,
             final_audio_path=self.final_audio_path,
             final_video_path=self.final_video_path,
+            captions_path=self.captions_path
+            or (storyboard.captions_path if storyboard else None),
             youtube_url=self.youtube_url,
             error_message=self.error_message,
             created_at=self.created_at.isoformat()
@@ -248,6 +251,12 @@ class DatabaseManager:
                 if "youtube_url" not in columns:
                     await conn.execute(
                         text("ALTER TABLE projects ADD COLUMN youtube_url VARCHAR(256)")
+                    )
+                if "captions_path" not in columns:
+                    await conn.execute(
+                        text(
+                            "ALTER TABLE projects ADD COLUMN captions_path VARCHAR(256)"
+                        )
                     )
 
     async def create_project(
@@ -417,8 +426,9 @@ class DatabaseManager:
         project_id: str,
         storyboard: AnimationStoryboard,
         final_video_path: str | None = None,
+        captions_path: str | None = None,
     ) -> ProjectSession | None:
-        """Persist full scene animations storyboard and optional final video path."""
+        """Persist full scene animations storyboard and optional final video and captions paths."""
         async with self.session_factory() as session:
             stmt = select(ProjectRecord).where(ProjectRecord.project_id == project_id)
             result = await session.execute(stmt)
@@ -428,6 +438,10 @@ class DatabaseManager:
             record.storyboard_json = storyboard.model_dump_json()
             if final_video_path is not None:
                 record.final_video_path = final_video_path
+            if captions_path is not None:
+                record.captions_path = captions_path
+            elif storyboard.captions_path is not None:
+                record.captions_path = storyboard.captions_path
             record.updated_at = datetime.now(UTC)
             await session.commit()
             return record.to_session()

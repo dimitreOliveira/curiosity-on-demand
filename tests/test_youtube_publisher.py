@@ -287,3 +287,96 @@ async def test_youtube_publisher_publish_video_success(tmp_path):
         assert res_short.video_url == "https://www.youtube.com/shorts/yt_short_456"
         assert res_short.is_short
         assert res_short.title.endswith("#Shorts")
+
+
+def test_caption_utils_format_and_generate_srt(
+    tmp_path, sample_script, sample_narration_storyboard
+):
+    """Test formatting SRT timestamps, stripping audio tags, and generating synchronized SRT files."""
+    from core.caption_utils import (
+        format_srt_timestamp,
+        generate_srt_content,
+        save_srt_subtitles,
+        split_text_into_caption_cues,
+        strip_audio_tags,
+    )
+
+    assert format_srt_timestamp(0.0) == "00:00:00,000"
+    assert format_srt_timestamp(1.25) == "00:00:01,250"
+    assert format_srt_timestamp(83.5) == "00:01:23,500"
+    assert format_srt_timestamp(3661.005) == "01:01:01,005"
+
+    assert (
+        strip_audio_tags("[whispers] Hello [pause] world! [excitedly]")
+        == "Hello world!"
+    )
+
+    cues = split_text_into_caption_cues(
+        "[curious] Imagine a light switch that is not just ON or OFF, but pointing in every direction simultaneously.",
+        max_words_per_cue=8,
+    )
+    assert len(cues) >= 2
+    assert "[curious]" not in " ".join(cues)
+
+    srt_text = generate_srt_content(
+        script=sample_script,
+        narration_storyboard=sample_narration_storyboard,
+    )
+    assert "1\n00:00:00,000 -->" in srt_text
+    # sample_narration_storyboard has 3 scenes of 1.0s each -> total duration ends at 00:00:03,000
+    assert "--> 00:00:03,000" in srt_text
+
+    srt_file = tmp_path / "captions.srt"
+    saved = save_srt_subtitles(
+        output_path=srt_file,
+        script=sample_script,
+        narration_storyboard=sample_narration_storyboard,
+    )
+    assert saved == srt_file
+    assert srt_file.exists()
+    assert srt_file.read_text(encoding="utf-8") == srt_text
+
+
+@pytest.mark.asyncio
+async def test_youtube_publisher_publish_video_with_captions(tmp_path):
+    """Test uploading video with synchronized .srt captions file to YouTube."""
+    settings = Settings(
+        youtube_client_id="cid",
+        youtube_client_secret="csec",
+        youtube_refresh_token="rtoken",
+    )
+    publisher = YouTubePublisher(settings=settings)
+
+    test_video = tmp_path / "video.mp4"
+    test_video.write_bytes(b"dummy video data")
+    test_srt = tmp_path / "captions.srt"
+    test_srt.write_text(
+        "1\n00:00:00,000 --> 00:00:02,000\nHello world\n", encoding="utf-8"
+    )
+
+    mock_insert_req = MagicMock()
+    mock_insert_req.next_chunk.return_value = (None, {"id": "yt_captioned_789"})
+
+    mock_captions_insert_req = MagicMock()
+    mock_captions_insert_req.execute.return_value = {"id": "cap_track_1"}
+
+    mock_service = MagicMock()
+    mock_service.videos().insert.return_value = mock_insert_req
+    mock_service.captions().insert.return_value = mock_captions_insert_req
+
+    with (
+        patch.object(publisher, "get_credentials", return_value=MagicMock()),
+        patch("services.youtube_publisher.build", return_value=mock_service),
+    ):
+        res = await publisher.publish_video(
+            video_path=test_video,
+            topic="Quantum Mechanics",
+            captions_path=test_srt,
+        )
+
+        assert res.video_id == "yt_captioned_789"
+        assert res.captions_uploaded is True
+        mock_service.captions().insert.assert_called_once()
+        cap_call_kwargs = mock_service.captions().insert.call_args[1]
+        assert cap_call_kwargs["body"]["snippet"]["videoId"] == "yt_captioned_789"
+        assert cap_call_kwargs["body"]["snippet"]["language"] == "en"

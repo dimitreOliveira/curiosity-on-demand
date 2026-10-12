@@ -31,6 +31,7 @@ from agents.scene_animator import SceneAnimatorAgent
 from agents.script_writer import ScriptWriterAgent, parse_duration_to_seconds
 from config.settings import Settings, get_settings
 from core.audio_utils import format_duration, get_wav_duration
+from core.caption_utils import save_srt_subtitles
 from core.cost_tracker import (
     PipelineComponent,
     get_cost_tracker,
@@ -1371,22 +1372,7 @@ class TelegramBotService:
                 html_path = anim_dir / f"scene_{scene_anim.scene_number}.html"
                 html_path.write_text(scene_anim.html_content, encoding="utf-8")
 
-            # Render scene video clips concurrently in parallel
-            scene_video_paths = await self.renderer.render_scenes_parallel(
-                scenes=storyboard.scenes,
-                output_dir=render_dir,
-                concurrency=self.settings.render_concurrency,
-                width=video_width,
-                height=video_height,
-            )
-
-            # Assemble final master MP4 video with narration audio muxed in
-            final_video_path = render_dir / f"final_video_{project_folder}.mp4"
-            final_audio_p = (
-                Path(narration_storyboard.full_audio_path)
-                if narration_storyboard and narration_storyboard.full_audio_path
-                else None
-            )
+            # Check whether all scenes have valid synthesized audio for single-pass rendering + muxing
             scene_audio_paths = (
                 [
                     s.audio_path
@@ -1396,13 +1382,57 @@ class TelegramBotService:
                 if narration_storyboard
                 else None
             )
+            can_single_pass_mux = bool(
+                narration_storyboard
+                and scene_audio_paths
+                and len(scene_audio_paths) == len(storyboard.scenes)
+                and all(Path(p).exists() for p in scene_audio_paths)
+            )
+
+            # Render scene video clips concurrently in parallel (with single-pass audio muxing when available)
+            scene_video_paths = await self.renderer.render_scenes_parallel(
+                scenes=storyboard.scenes,
+                output_dir=render_dir,
+                concurrency=self.settings.render_concurrency,
+                width=video_width,
+                height=video_height,
+                narration_storyboard=narration_storyboard
+                if can_single_pass_mux
+                else None,
+            )
+
+            # Assemble final master MP4 video with narration audio muxed in
+            final_video_path = render_dir / f"final_video_{project_folder}.mp4"
+            final_audio_p = (
+                Path(narration_storyboard.full_audio_path)
+                if narration_storyboard and narration_storyboard.full_audio_path
+                else None
+            )
             await self.renderer.assemble_video(
                 scene_video_paths=scene_video_paths,
                 output_video_path=final_video_path,
                 audio_path=final_audio_p,
                 scene_audio_paths=scene_audio_paths,
                 narration_storyboard=narration_storyboard,
+                scenes_pre_muxed=can_single_pass_mux,
             )
+
+            # Generate synchronized SRT subtitle file for the video
+            captions_path = render_dir / f"captions_{project_folder}.srt"
+            try:
+                save_srt_subtitles(
+                    output_path=captions_path,
+                    script=script,
+                    narration_storyboard=narration_storyboard,
+                    animation_storyboard=storyboard,
+                )
+                storyboard.captions_path = str(captions_path)
+            except (OSError, ValueError, RuntimeError) as srt_err:
+                logger.warning(
+                    "Failed to generate synchronized SRT captions for project %s: %s",
+                    project_id,
+                    srt_err,
+                )
 
             storyboard.final_video_path = str(final_video_path)
             storyboard.sample_frame_path = session.sample_frame_path
@@ -1411,6 +1441,7 @@ class TelegramBotService:
                 project_id=project_id,
                 storyboard=storyboard,
                 final_video_path=str(final_video_path),
+                captions_path=storyboard.captions_path,
             )
 
             await self.state_machine.transition(
@@ -1525,6 +1556,8 @@ class TelegramBotService:
                         else f"🖥️ *Format:* Horizontal 16:9 ({video_width}x{video_height})"
                     )
                     caption_lines.append(format_badge)
+                    if storyboard.captions_path:
+                        caption_lines.append("💬 *Captions:* Synchronized `.srt` ready")
                     caption_lines.append(cost_badge)
 
                     if is_preview:
@@ -1718,6 +1751,7 @@ class TelegramBotService:
                 script=session.script,
                 storyboard=session.storyboard,
                 is_vertical=is_vertical,
+                captions_path=session.captions_path,
             )
 
             await self.db.save_youtube_url(project_id, result.video_url)

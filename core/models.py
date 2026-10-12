@@ -177,6 +177,10 @@ class AnimationStoryboard(BaseModel):
         default=None,
         description="Filesystem path to the assembled final MP4 video",
     )
+    captions_path: str | None = Field(
+        default=None,
+        description="Filesystem path to the generated synchronized SRT captions file",
+    )
 
 
 class SceneNarrationPlan(BaseModel):
@@ -329,6 +333,10 @@ class ProjectSession(BaseModel):
     final_video_path: str | None = Field(
         default=None, description="Path to assembled final MP4 video"
     )
+    captions_path: str | None = Field(
+        default=None,
+        description="Path to generated synchronized SRT subtitles file",
+    )
     youtube_url: str | None = Field(
         default=None, description="Published YouTube video URL"
     )
@@ -412,4 +420,8 @@ class YouTubePublishResult(BaseModel):
     is_short: bool = Field(
         default=False,
         description="Whether the video was published as a vertical YouTube Short",
+    )
+    captions_uploaded: bool = Field(
+        default=False,
+        description="Whether synchronized SRT captions were uploaded to YouTube",
     )

@@ -18,6 +18,56 @@ from core.models import NarrationStoryboard, SceneAnimation
 
 logger = logging.getLogger(__name__)
 
+# Virtual-time shim injected into headless browser contexts before page scripts run.
+# Overrides performance.now(), Date.now(), and requestAnimationFrame() so animations
+# can be stepped deterministically frame-by-frame faster than real-time with zero
+# dropped frames, and supports smooth time-scaling when syncing to audio duration.
+DETERMINISTIC_TIME_SHIM = """
+(() => {
+  let virtualTimeMs = 0;
+  let rafIdCounter = 0;
+  let rafQueue = new Map();
+
+  const origDateNow = Date.now.bind(Date);
+  const baseEpoch = origDateNow();
+
+  try {
+    Object.defineProperty(performance, 'now', {
+      value: () => virtualTimeMs,
+      configurable: true,
+      writable: true,
+    });
+  } catch (e) {
+    performance.now = () => virtualTimeMs;
+  }
+
+  Date.now = () => baseEpoch + Math.floor(virtualTimeMs);
+
+  window.requestAnimationFrame = (callback) => {
+    const id = ++rafIdCounter;
+    rafQueue.set(id, callback);
+    return id;
+  };
+
+  window.cancelAnimationFrame = (id) => {
+    rafQueue.delete(id);
+  };
+
+  window.__stepVirtualFrame = (targetTimeMs) => {
+    virtualTimeMs = targetTimeMs;
+    const currentCallbacks = Array.from(rafQueue.entries());
+    rafQueue.clear();
+    for (const [, cb] of currentCallbacks) {
+      try {
+        cb(virtualTimeMs);
+      } catch (err) {
+        console.error('Animation frame callback error:', err);
+      }
+    }
+  };
+})();
+"""
+
 
 class AnimationRenderer:
     """Renders HTML5 Canvas and SVG animations to image snapshots and MP4 video clips."""
@@ -73,42 +123,58 @@ class AnimationRenderer:
         width: int,
         height: int,
         fps: int,
+        audio_path: Path | None = None,
     ) -> Path:
-        """Record HTML canvas animation within an isolated browser context and transcode to MP4."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_path = Path(temp_dir)
-            rec_dir = temp_path / "recordings"
-            rec_dir.mkdir(parents=True, exist_ok=True)
-
-            context = await browser.new_context(
-                viewport={"width": width, "height": height},
-                record_video_dir=str(rec_dir),
-                record_video_size={"width": width, "height": height},
+        """Deterministically step HTML canvas frames and encode directly to MP4 (with optional single-pass audio mux)."""
+        native_duration = max(0.1, float(duration_seconds))
+        valid_audio = (
+            audio_path
+            if (
+                audio_path is not None
+                and audio_path.exists()
+                and audio_path.stat().st_size > 0
             )
-            try:
-                page = await context.new_page()
-                await page.set_content(html_content, wait_until="domcontentloaded")
-                # Let animation play for the target duration
-                await asyncio.sleep(duration_seconds)
-                await page.close()
-            finally:
-                await context.close()
+            else None
+        )
 
-            # Find recorded video file (.webm)
-            recorded_files = list(rec_dir.glob("*.webm"))
-            if not recorded_files:
-                raise RuntimeError(
-                    f"No video recording produced by Playwright for {output_video_path}"
+        # If audio is provided, synchronize target playback duration in a single pass
+        target_duration = native_duration
+        if valid_audio is not None:
+            try:
+                probed_audio_dur = await self.get_media_duration(valid_audio)
+                if probed_audio_dur > 0:
+                    target_duration = probed_audio_dur
+            except (RuntimeError, OSError, ValueError) as err:
+                logger.warning(
+                    "Could not probe audio duration for %s (%s); using native duration %.2fs",
+                    valid_audio,
+                    err,
+                    native_duration,
                 )
 
-            recorded_webm = recorded_files[0]
+        total_frames = max(1, round(target_duration * fps))
 
-            # Transcode WebM to standard MP4 (H.264 / YUV420p)
-            cmd = [
-                self.ffmpeg_path,
-                "-y",
-                "-i",
-                str(recorded_webm),
+        # Build single-pass FFmpeg command reading deterministic JPEG frames from image2pipe stdin
+        cmd = [
+            self.ffmpeg_path,
+            "-y",
+            "-f",
+            "image2pipe",
+            "-vcodec",
+            "mjpeg",
+            "-framerate",
+            str(fps),
+            "-i",
+            "-",
+        ]
+
+        if valid_audio is not None:
+            cmd.extend(["-i", str(valid_audio.resolve())])
+
+        cmd.extend(
+            [
+                "-t",
+                f"{target_duration:.3f}",
                 "-c:v",
                 "libx264",
                 "-preset",
@@ -119,24 +185,72 @@ class AnimationRenderer:
                 "yuv420p",
                 "-r",
                 str(fps),
-                "-movflags",
-                "+faststart",
-                str(output_video_path),
             ]
+        )
 
-            logger.debug("Executing ffmpeg: %s", " ".join(cmd))
+        if valid_audio is not None:
+            cmd.extend(["-c:a", "aac"])
+
+        cmd.extend(["-movflags", "+faststart", str(output_video_path)])
+
+        logger.debug("Executing single-pass ffmpeg pipe encode: %s", " ".join(cmd))
+
+        context = await browser.new_context(
+            viewport={"width": width, "height": height},
+            device_scale_factor=1,
+        )
+        try:
+            await context.add_init_script(DETERMINISTIC_TIME_SHIM)
+            page = await context.new_page()
+            await page.set_content(html_content, wait_until="domcontentloaded")
+
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
+                stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
+
+            try:
+                for frame_idx in range(total_frames):
+                    if total_frames > 1:
+                        virtual_time_ms = (
+                            (frame_idx / float(total_frames)) * native_duration * 1000.0
+                        )
+                    else:
+                        virtual_time_ms = 0.0
+
+                    await page.evaluate(f"window.__stepVirtualFrame({virtual_time_ms})")
+                    frame_bytes = await page.screenshot(
+                        type="jpeg",
+                        quality=90,
+                        full_page=False,
+                    )
+                    if proc.stdin is not None:
+                        proc.stdin.write(frame_bytes)
+                        await proc.stdin.drain()
+            except BrokenPipeError:
+                logger.warning(
+                    "FFmpeg stdin pipe closed early while rendering %s",
+                    output_video_path,
+                )
+            finally:
+                if proc.stdin is not None:
+                    try:
+                        proc.stdin.close()
+                    except OSError:
+                        pass
+
             _stdout, stderr = await proc.communicate()
+            await page.close()
 
             if proc.returncode != 0:
-                logger.error("FFmpeg transcode error: %s", stderr.decode())
+                logger.error("FFmpeg pipe encode error: %s", stderr.decode())
                 raise RuntimeError(
-                    f"FFmpeg transcode failed with return code {proc.returncode}"
+                    f"FFmpeg pipe encode failed with return code {proc.returncode}"
                 )
+        finally:
+            await context.close()
 
         if not output_video_path.exists() or output_video_path.stat().st_size == 0:
             raise RuntimeError(
@@ -154,18 +268,20 @@ class AnimationRenderer:
         height: int | None = None,
         fps: int = 30,
         browser: Browser | None = None,
+        audio_path: Path | None = None,
     ) -> Path:
-        """Render real-time HTML/SVG/Canvas animation in headless browser and encode to MP4."""
+        """Render HTML/SVG/Canvas animation in headless browser using deterministic frame-stepping and encode to MP4."""
         w = width or self.settings.video_width
         h = height or self.settings.video_height
 
         output_video_path.parent.mkdir(parents=True, exist_ok=True)
         logger.info(
-            "Rendering scene video (%.2fs, %dx%d @ %dfps) to %s",
+            "Rendering scene video (%.2fs, %dx%d @ %dfps, audio=%s) to %s",
             duration_seconds,
             w,
             h,
             fps,
+            bool(audio_path),
             output_video_path,
         )
 
@@ -178,6 +294,7 @@ class AnimationRenderer:
                 width=w,
                 height=h,
                 fps=fps,
+                audio_path=audio_path,
             )
 
         async with async_playwright() as p:
@@ -191,6 +308,7 @@ class AnimationRenderer:
                     width=w,
                     height=h,
                     fps=fps,
+                    audio_path=audio_path,
                 )
             finally:
                 await local_browser.close()
@@ -204,13 +322,30 @@ class AnimationRenderer:
         browser: Browser | None = None,
         width: int | None = None,
         height: int | None = None,
+        scene_audio_paths: dict[int, Path | str] | Sequence[Path | str] | None = None,
+        narration_storyboard: NarrationStoryboard | None = None,
     ) -> list[Path]:
-        """Render all scene animations concurrently in parallel using isolated browser recording sessions."""
+        """Render all scene animations concurrently in parallel using isolated browser contexts and optional single-pass audio muxing."""
         if not scenes:
             return []
 
         limit = concurrency or self.settings.render_concurrency
         output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Resolve per-scene audio mapping if provided for single-pass audio/video synchronization
+        audio_map: dict[int, Path] = {}
+        if isinstance(scene_audio_paths, dict):
+            for s_num, a_p in scene_audio_paths.items():
+                if a_p and Path(a_p).exists():
+                    audio_map[int(s_num)] = Path(a_p)
+        elif scene_audio_paths is not None:
+            for idx, a_p in enumerate(scene_audio_paths):
+                if idx < len(scenes) and a_p and Path(a_p).exists():
+                    audio_map[scenes[idx].scene_number] = Path(a_p)
+        elif narration_storyboard is not None and narration_storyboard.scenes_audio:
+            for s_audio in narration_storyboard.scenes_audio:
+                if s_audio.audio_path and Path(s_audio.audio_path).exists():
+                    audio_map[s_audio.scene_number] = Path(s_audio.audio_path)
 
         # Resolve dimensions if not explicitly passed
         if width is not None and height is not None:
@@ -224,11 +359,12 @@ class AnimationRenderer:
             )
 
         logger.info(
-            "Rendering %d scenes in parallel (concurrency limit: %d, %dx%d) into %s",
+            "Rendering %d scenes in parallel (concurrency limit: %d, %dx%d, single_pass_audio=%s) into %s",
             len(scenes),
             limit,
             w,
             h,
+            bool(audio_map),
             output_dir,
         )
 
@@ -239,21 +375,35 @@ class AnimationRenderer:
         ) -> tuple[int, Path]:
             scene_num = scene_anim.scene_number
             video_path = output_dir / f"scene_{scene_num}.mp4"
+            scene_audio = audio_map.get(scene_num)
             async with semaphore:
                 logger.info(
-                    "Rendering Scene %d video in parallel (%.2fs)...",
+                    "Rendering Scene %d video in parallel (%.2fs, single_pass_audio=%s)...",
                     scene_num,
                     scene_anim.duration_seconds,
+                    bool(scene_audio),
                 )
-                await self.render_scene_video(
-                    html_content=scene_anim.html_content,
-                    output_video_path=video_path,
-                    duration_seconds=scene_anim.duration_seconds,
-                    width=w,
-                    height=h,
-                    fps=fps,
-                    browser=target_browser,
-                )
+                if scene_audio is not None:
+                    await self.render_scene_video(
+                        html_content=scene_anim.html_content,
+                        output_video_path=video_path,
+                        duration_seconds=scene_anim.duration_seconds,
+                        width=w,
+                        height=h,
+                        fps=fps,
+                        browser=target_browser,
+                        audio_path=scene_audio,
+                    )
+                else:
+                    await self.render_scene_video(
+                        html_content=scene_anim.html_content,
+                        output_video_path=video_path,
+                        duration_seconds=scene_anim.duration_seconds,
+                        width=w,
+                        height=h,
+                        fps=fps,
+                        browser=target_browser,
+                    )
                 return scene_num, video_path
 
         if browser is not None or isinstance(self.render_scene_video, AsyncMock):
@@ -506,38 +656,129 @@ class AnimationRenderer:
         scene_audio_paths: Sequence[Path | str] | None = None,
         narration_storyboard: NarrationStoryboard | None = None,
         fps: int = 30,
+        scenes_pre_muxed: bool = False,
     ) -> Path:
         """Concatenate multiple scene MP4 video files into a final master video with synchronized audio.
 
-        If scene_audio_paths or narration_storyboard is provided, each scene's video
-        is adjusted (sped up or slowed down) to exactly match its scene narration audio
-        before concatenation, ensuring perfect scene-by-scene audio/video synchronization.
+        If scenes_pre_muxed is True, each scene MP4 already has its audio track muxed and
+        duration synchronized during single-pass rendering, so assembly concatenates directly
+        via lossless stream-copy without re-encoding.
+        Otherwise, if scene_audio_paths or narration_storyboard is provided, each scene's video
+        is adjusted (sped up or slowed down) to match its scene narration audio before concatenation.
         """
         if not scene_video_paths:
             raise ValueError("No scene video paths provided for assembly")
 
-        # Resolve scene audio paths from storyboard if not explicitly passed
+        # Resolve scene audio paths from storyboard if not explicitly passed (unless already pre-muxed)
         resolved_scene_audios: list[Path] | None = None
-        if scene_audio_paths is not None:
-            resolved_scene_audios = [Path(p) for p in scene_audio_paths]
-        elif narration_storyboard is not None and narration_storyboard.scenes_audio:
-            resolved_scene_audios = [
-                Path(s.audio_path)
-                for s in narration_storyboard.scenes_audio
-                if s.audio_path and Path(s.audio_path).exists()
-            ]
+        if not scenes_pre_muxed:
+            if scene_audio_paths is not None:
+                resolved_scene_audios = [Path(p) for p in scene_audio_paths]
+            elif narration_storyboard is not None and narration_storyboard.scenes_audio:
+                resolved_scene_audios = [
+                    Path(s.audio_path)
+                    for s in narration_storyboard.scenes_audio
+                    if s.audio_path and Path(s.audio_path).exists()
+                ]
 
         output_video_path.parent.mkdir(parents=True, exist_ok=True)
         logger.info(
-            "Assembling %d scene videos into master video %s (per_scene_audio=%s, master_audio=%s)",
+            "Assembling %d scene videos into master video %s (scenes_pre_muxed=%s, per_scene_audio=%s, master_audio=%s)",
             len(scene_video_paths),
             output_video_path,
+            scenes_pre_muxed,
             bool(resolved_scene_audios),
             bool(audio_path),
         )
 
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
+
+            # Fast path when scenes were already single-pass rendered & synced with audio
+            if scenes_pre_muxed:
+                if len(scene_video_paths) == 1:
+                    shutil.copy2(scene_video_paths[0], output_video_path)
+                    return output_video_path
+
+                concat_txt = temp_path / "concat_list.txt"
+                concat_content = "".join(
+                    f"file '{p.resolve()}'\n" for p in scene_video_paths
+                )
+                concat_txt.write_text(concat_content, encoding="utf-8")
+
+                cmd = [
+                    self.ffmpeg_path,
+                    "-y",
+                    "-f",
+                    "concat",
+                    "-safe",
+                    "0",
+                    "-i",
+                    str(concat_txt),
+                    "-c",
+                    "copy",
+                    "-movflags",
+                    "+faststart",
+                    str(output_video_path),
+                ]
+
+                logger.debug(
+                    "Executing ffmpeg pre-muxed fast concat: %s", " ".join(cmd)
+                )
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+                _stdout, stderr = await proc.communicate()
+
+                if proc.returncode != 0:
+                    logger.warning(
+                        "FFmpeg stream copy concat failed for pre-muxed scenes, attempting re-encode fallback: %s",
+                        stderr.decode(),
+                    )
+                    fallback_cmd = [
+                        self.ffmpeg_path,
+                        "-y",
+                        "-f",
+                        "concat",
+                        "-safe",
+                        "0",
+                        "-i",
+                        str(concat_txt),
+                        "-c:v",
+                        "libx264",
+                        "-preset",
+                        "fast",
+                        "-crf",
+                        "22",
+                        "-pix_fmt",
+                        "yuv420p",
+                        "-c:a",
+                        "aac",
+                        "-movflags",
+                        "+faststart",
+                        str(output_video_path),
+                    ]
+                    fb_proc = await asyncio.create_subprocess_exec(
+                        *fallback_cmd,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+                    _, fb_stderr = await fb_proc.communicate()
+                    if fb_proc.returncode != 0:
+                        raise RuntimeError(
+                            f"FFmpeg assembly fallback failed: {fb_stderr.decode()}"
+                        )
+
+                if (
+                    not output_video_path.exists()
+                    or output_video_path.stat().st_size == 0
+                ):
+                    raise RuntimeError(
+                        f"Failed to assemble master video at {output_video_path}"
+                    )
+                return output_video_path
 
             # Per-scene synchronization mode
             if resolved_scene_audios and len(resolved_scene_audios) == len(
