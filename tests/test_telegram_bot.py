@@ -1138,7 +1138,7 @@ async def test_full_animation_pipeline_concurrent_narration_and_animation(
 
     await bot_service._run_full_animation_pipeline(session.project_id)
 
-    # Verify both agents were invoked with configured concurrency and synthesized audio durations were passed to animate_storyboard
+    # Verify both agents were invoked concurrently with configured concurrency
     assert bot_service.narrator.generate_full_narration.call_count == 1
     assert (
         bot_service.narrator.generate_full_narration.call_args[1]["concurrency"]
@@ -1147,8 +1147,7 @@ async def test_full_animation_pipeline_concurrent_narration_and_animation(
     assert bot_service.animator.animate_storyboard.call_count == 1
     anim_sb_kwargs = bot_service.animator.animate_storyboard.call_args[1]
     assert anim_sb_kwargs["concurrency"] == mock_settings.animation_concurrency
-    assert anim_sb_kwargs["narration_storyboard"] == sample_narration_storyboard
-    assert anim_sb_kwargs["scene_durations"] == {1: 1.0, 2: 1.0, 3: 1.0}
+    assert anim_sb_kwargs["narration_storyboard"] is None
 
     # Verify narration storyboard persisted
     updated = await memory_db.get_project(session.project_id)

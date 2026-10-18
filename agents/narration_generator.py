@@ -11,7 +11,12 @@ from google.genai import types
 
 from agents.base import BaseAgent
 from config.settings import Settings, get_settings
-from core.audio_utils import combine_wav_files, convert_to_wav, get_wav_duration
+from core.audio_utils import (
+    combine_wav_files,
+    convert_to_wav,
+    get_wav_duration,
+    normalize_inline_audio_tags,
+)
 from core.models import (
     NarrationPlan,
     NarrationStoryboard,
@@ -28,7 +33,8 @@ def build_speech_prompt(
     transcript: str | None = None,
 ) -> str:
     """Construct directorial Gemini TTS prompt incorporating Audio Profile, Scene, Director's Notes, and Transcript."""
-    text_to_speak = transcript or (scene.enhanced_narration if scene else "")
+    raw_text = transcript or (scene.enhanced_narration if scene else "")
+    text_to_speak = normalize_inline_audio_tags(raw_text)
 
     scene_tone_line = f"Scene Tone: {scene.tone}" if scene and scene.tone else ""
     scene_pace_line = f"Scene Pace: {scene.pace}" if scene and scene.pace else ""
@@ -64,7 +70,7 @@ def build_speech_prompt(
 
 
 class NarrationGeneratorAgent(BaseAgent):
-    """Synthesizes expressive voiceover audio using Gemini TTS (gemini-3.1-flash-tts-preview)."""
+    """Synthesizes expressive voiceover audio using Gemini TTS (gemini-3.8-flash-tts)."""
 
     DEFAULT_CONCURRENCY: ClassVar[int] = 3
 

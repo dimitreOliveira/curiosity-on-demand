@@ -1,10 +1,151 @@
 import logging
+import re
 import struct
 import wave
 from collections.abc import Sequence
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+# Official point-in-time inline vocal tags supported by Gemini 3.8 TTS (enclosed in <...>)
+VALID_INLINE_AUDIO_TAGS: frozenset[str] = frozenset(
+    {
+        "argh",
+        "breath",
+        "heavy breath",
+        "exhales",
+        "cackle",
+        "cheer",
+        "chuckle",
+        "chuckles",
+        "cough",
+        "cry",
+        "gasp",
+        "giggle",
+        "groan",
+        "growl",
+        "grunt",
+        "grr",
+        "hiss",
+        "laugh",
+        "laughter",
+        "moan",
+        "pant",
+        "pff",
+        "phew",
+        "scream",
+        "shout",
+        "shriek",
+        "sigh",
+        "sighs",
+        "sneeze",
+        "snicker",
+        "snort",
+        "sob",
+        "throat-clearing",
+        "tsk",
+        "whimper",
+        "whispers",
+        "whispering",
+        "yawn",
+        "short pause",
+        "long pause",
+    }
+)
+
+# Mapping of common LLM-generated or legacy tag variants to canonical Gemini 3.8 TTS inline tags
+INLINE_AUDIO_TAG_ALIASES: dict[str, str] = {
+    "pause": "short pause",
+    "brief pause": "short pause",
+    "slight pause": "short pause",
+    "quick pause": "short pause",
+    "beat": "short pause",
+    "short beat": "short pause",
+    "hesitation": "short pause",
+    "hesitates": "short pause",
+    "dramatic pause": "long pause",
+    "long beat": "long pause",
+    "extended pause": "long pause",
+    "pregnant pause": "long pause",
+    "deep pause": "long pause",
+    "clears throat": "throat-clearing",
+    "clear throat": "throat-clearing",
+    "throat clearing": "throat-clearing",
+    "ahem": "throat-clearing",
+    "whisper": "whispers",
+    "whispered": "whispers",
+    "hushed": "whispers",
+    "deep breath": "heavy breath",
+    "sharp breath": "heavy breath",
+    "big breath": "heavy breath",
+    "inhale": "breath",
+    "inhales": "breath",
+    "breathes in": "breath",
+    "takes a breath": "breath",
+    "exhale": "exhales",
+    "breathes out": "exhales",
+    "laughs": "laugh",
+    "laughing": "laugh",
+    "chuckling": "chuckles",
+    "gasps": "gasp",
+    "gasping": "gasp",
+    "sighing": "sigh",
+    "coughs": "cough",
+    "coughing": "cough",
+    "groans": "groan",
+    "groaning": "groan",
+    "grunts": "grunt",
+    "grunting": "grunt",
+    "yawns": "yawn",
+    "yawning": "yawn",
+    "giggles": "giggle",
+    "giggling": "giggle",
+    "snickers": "snicker",
+    "snickering": "snicker",
+    "sobs": "sob",
+    "sobbing": "sob",
+    "cries": "cry",
+    "crying": "cry",
+    "screams": "scream",
+    "screaming": "scream",
+    "shouts": "shout",
+    "shouting": "shout",
+    "shrieks": "shriek",
+    "shrieking": "shriek",
+    "pants": "pant",
+    "breathless": "pant",
+    "out of breath": "pant",
+}
+
+_INLINE_TAG_PATTERN = re.compile(r"\[([^\[\]]+)\]|<([a-zA-Z][a-zA-Z\s\-_]*)>")
+
+
+def normalize_inline_audio_tags(text: str) -> str:
+    """Normalize inline TTS tags to Gemini 3.8 TTS angle-bracket format (<...>).
+
+    Converts valid vocal events and pause aliases (whether in `[...]` or `<...>`)
+    to canonical `<...>` tags (e.g. `[dramatic pause]` -> `<long pause>`,
+    `[pause]` -> `<short pause>`, `[gasp]` -> `<gasp>`), and strips unsupported
+    inline stage directions (e.g. `[excitedly]`, `[curious]`) so the TTS model
+    does not read them aloud.
+    """
+    if not text:
+        return ""
+
+    def _replace_tag(match: re.Match[str]) -> str:
+        raw_tag = (match.group(1) or match.group(2) or "").strip().lower()
+        raw_tag = re.sub(r"\s+", " ", raw_tag)
+        if raw_tag in VALID_INLINE_AUDIO_TAGS:
+            return f"<{raw_tag}>"
+        if raw_tag in INLINE_AUDIO_TAG_ALIASES:
+            return f"<{INLINE_AUDIO_TAG_ALIASES[raw_tag]}>"
+        return ""
+
+    normalized = _INLINE_TAG_PATTERN.sub(_replace_tag, text)
+    # Clean up redundant spaces while preserving intentional newlines
+    normalized = re.sub(r"[ \t]+", " ", normalized)
+    normalized = re.sub(r" +([,.;:!?])", r"\1", normalized)
+    return normalized.strip()
 
 
 def parse_audio_mime_type(mime_type: str | None = None) -> dict[str, int]:

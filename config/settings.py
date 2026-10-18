@@ -70,7 +70,7 @@ class Settings(BaseSettings):
         description="Gemini model for audio direction and narration planning",
     )
     tts_model: str = Field(
-        default="gemini-3.1-flash-tts-preview",
+        default="gemini-3.8-flash-tts",
         alias="TTS_MODEL",
         description="Gemini model for text-to-speech voice audio generation",
     )
@@ -130,7 +130,7 @@ class Settings(BaseSettings):
         description="Maximum concurrent Gemini TTS speech synthesis tasks",
     )
     animation_concurrency: int = Field(
-        default=3,
+        default=6,
         alias="ANIMATION_CONCURRENCY",
         description="Maximum concurrent Gemini LLM scene canvas code generation tasks",
     )

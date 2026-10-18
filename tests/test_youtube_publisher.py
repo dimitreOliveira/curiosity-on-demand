@@ -310,13 +310,18 @@ def test_caption_utils_format_and_generate_srt(
         strip_audio_tags("[whispers] Hello [pause] world! [excitedly]")
         == "Hello world!"
     )
+    assert (
+        strip_audio_tags("<whispers> Hello <long pause> world! <gasp>")
+        == "Hello world!"
+    )
 
     cues = split_text_into_caption_cues(
-        "[curious] Imagine a light switch that is not just ON or OFF, but pointing in every direction simultaneously.",
+        "<short pause> Imagine a light switch that is not just ON or OFF, <gasp> but pointing in every direction simultaneously.",
         max_words_per_cue=8,
     )
     assert len(cues) >= 2
-    assert "[curious]" not in " ".join(cues)
+    assert "<short pause>" not in " ".join(cues)
+    assert "<gasp>" not in " ".join(cues)
 
     srt_text = generate_srt_content(
         script=sample_script,

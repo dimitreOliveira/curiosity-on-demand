@@ -4,6 +4,7 @@ import logging
 
 from agents.base import BaseAgent
 from config.settings import Settings, get_settings
+from core.audio_utils import normalize_inline_audio_tags
 from core.models import (
     NarrationPlan,
     Script,
@@ -13,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 NARRATION_PLANNER_SYSTEM_PROMPT = """You are a World-Class Audio Director, Voice Casting Specialist, and Narrative Performance Producer for Curiosity On Demand, an elite educational video channel.
 
-Your mission is to analyze the complete video narration script and design a cohesive, engaging, and emotionally resonant voiceover performance system that will steer Gemini Text-to-Speech (TTS).
+Your mission is to analyze the complete video narration script and design a cohesive, engaging, and emotionally resonant voiceover performance system that will steer Gemini Text-to-Speech (`gemini-3.8-flash-tts`).
 
 ### 🎙️ Voice Library (Select the Best Fit):
 Gemini TTS supports 30 expressive prebuilt voices. Choose the voice that best complements the subject matter, emotional tone, and persona:
@@ -41,13 +42,18 @@ Gemini TTS supports 30 expressive prebuilt voices. Choose the voice that best co
    - Accent & Articulation: Clear, natural articulation suited to educational narration.
 4. **Sample Context:**
    - Brief setup framing how the talent naturally introduces the topic.
-5. **Scene-by-Scene Enhanced Narration with Audio Tags (CRITICAL):**
-   - For every scene in the script, you MUST produce `enhanced_narration` which retains the script's exact spoken words, but modifies it with inline audio tags enclosed in square brackets.
-   - Use audio tags creatively and judiciously to direct emotional shifts, pace changes, emphasis, and non-verbal reactions:
-     * Tone tags: `[curious]`, `[excitedly]`, `[amazed]`, `[serious]`, `[intrigued]`, `[dramatic pause]`, `[warmly]`, `[thoughtful]`, `[reluctantly]`
-     * Energy tags: `[very fast]`, `[slowly]`, `[shouting]`, `[breathless]`
-     * Non-verbal sounds: `[gasp]`, `[sighs]`, `[chuckles]`, `[clears throat]`
-   - **Whisper Tag Rule (IMPORTANT):** Minimize the use of `[whisper]` / `[whispers]` tags. In text-to-speech synthesis, whispering often sounds muffled, unclear, or unnatural in practice. DO NOT use `[whispers]` casually or as a default introductory tone. ONLY use `[whisper]` when the context makes a quiet whisper strictly necessary and genuinely compelling (e.g. sharing a confidential secret or a hushed dramatic mystery). Favor clear, expressive tags like `[curious]`, `[intrigued]`, `[thoughtful]`, or `[dramatic pause]` instead.
+5. **Scene-by-Scene Enhanced Narration with Inline Audio Tags (CRITICAL):**
+   - For every scene in the script, you MUST produce `enhanced_narration` which retains the script's exact spoken words, enhanced ONLY with valid **angle-bracket (`<...>`)** inline point-in-time vocal and pause tags supported by `gemini-3.8-flash-tts`.
+   - **NEVER use square brackets (`[...]`)** or invent arbitrary inline stage directions (like `[dramatic pause]`, `[curious]`, `[excitedly]`, or `[very fast]`), because `gemini-3.8-flash-tts` treats the transcript as verbatim text and will read square-bracketed or non-vocal tags aloud!
+   - **Supported Angle-Bracket Inline Tags (`<...>`)**:
+     * **Pauses**: `<short pause>` (for a brief beat or hesitation), `<long pause>` (for a dramatic pause or major reveal)
+     * **Breaths & sighs**: `<breath>`, `<heavy breath>`, `<exhales>`, `<sigh>`, `<sighs>`, `<phew>`
+     * **Non-speech vocal reactions**: `<gasp>`, `<chuckle>`, `<chuckles>`, `<laugh>`, `<laughter>`, `<giggle>`, `<throat-clearing>`, `<cough>`, `<tsk>`, `<groan>`
+     * **Hushed delivery (sparingly)**: `<whispers>`, `<whispering>`
+   - **Sustained Style vs. Inline Tags**:
+     * Place sustained emotional delivery, vocal attitude, and speed/pacing (e.g., curious, excited, amazed, serious, thoughtful, warm, brisk, slow) into the scene's `tone`, `pace`, and `scene_directors_notes` fields—NOT as inline tags in `enhanced_narration`.
+     * For word-level emphasis inside `enhanced_narration`, CAPITALIZE key words (e.g., `"This is a VERY important point!"`) and use natural punctuation (`...`, `--`, `!`, `?`) paired with `<short pause>` or `<long pause>`.
+   - **Whisper Tag Rule (IMPORTANT):** Minimize the use of `<whispers>` / `<whispering>` (and `[whisper]` / `[whispers]`) tags. In text-to-speech synthesis, whispering often sounds muffled, unclear, or unnatural in practice. DO NOT use `<whispers>` casually or as a default introductory tone. ONLY use `<whispers>` when the context makes a quiet whisper strictly necessary and genuinely compelling (e.g. sharing a confidential secret or a hushed dramatic mystery). Favor clear inline pauses (`<short pause>`, `<long pause>`) and subtle vocal reactions (`<gasp>`, `<breath>`, `<sigh>`) instead.
    - Provide scene-specific `tone`, `pace`, and `scene_directors_notes` for each segment.
 """
 
@@ -112,9 +118,11 @@ class NarrationPlannerAgent(BaseAgent):
                 f"USER REVISION FEEDBACK:\n"
                 f"{feedback}\n\n"
                 f"Please update the NarrationPlan according to the user's feedback. "
-                f"Adjust voice choice, performance style, scene descriptions, and inline audio tags "
+                f"Adjust voice choice, performance style, scene descriptions, and inline angle-bracket vocal tags "
+                f"(e.g. <short pause>, <long pause>, <gasp>, <sigh>, <chuckles>, <breath>) "
                 f"across all {len(script.scenes)} scenes to fulfill the request. "
-                f"Remember to minimize whisper tags ([whisper]/[whispers]), reserving them only for when "
+                f"Never use square brackets [...]; put sustained emotional tone and pace in tone/pace/scene_directors_notes. "
+                f"Remember to minimize whisper tags (<whispers>/<whispering> and [whisper]/[whispers]), reserving them only for when "
                 f"a quiet whisper makes profound sense."
             )
         else:
@@ -122,9 +130,11 @@ class NarrationPlannerAgent(BaseAgent):
                 f"{base_context}\n\n"
                 f"Please formulate the ideal NarrationPlan for the educational video topic '{effective_topic}'. "
                 f"Select the best voice from the 30 supported Gemini TTS voices, define a compelling "
-                f"character persona, craft atmospheric scene notes, and embed natural, expressive "
-                f"audio tags (e.g. [excitedly], [amazed], [gasp], [curious], [thoughtful], [very fast]) "
-                f"into each scene's enhanced narration. Minimize whisper tags ([whisper]/[whispers]), "
+                f"character persona, craft atmospheric scene notes, and embed natural, point-in-time "
+                f"angle-bracket inline audio tags (ONLY valid tags such as <short pause>, <long pause>, <gasp>, "
+                f"<sigh>, <chuckles>, <breath>, <heavy breath>, <throat-clearing>) into each scene's enhanced narration. "
+                f"Never use square brackets [...] or inline tone adjectives; place sustained tone and pace in each scene's "
+                f"tone, pace, and scene_directors_notes fields. Minimize whisper tags (<whispers>/<whispering> and [whisper]/[whispers]), "
                 f"only using them when the scene context makes a quiet whisper strictly necessary. "
                 f"Ensure each scene maintains the core script words."
             )
@@ -132,11 +142,18 @@ class NarrationPlannerAgent(BaseAgent):
         if voice_name:
             prompt += f"\n\nVOICE SELECTION NOTE:\nPlease explicitly set the voice_name to '{voice_name}'."
 
-        return await self.generate_structured(
+        plan = await self.generate_structured(
             prompt=prompt,
             response_schema=NarrationPlan,
             system_instruction=NARRATION_PLANNER_SYSTEM_PROMPT,
         )
+
+        for scene in plan.scenes:
+            scene.enhanced_narration = normalize_inline_audio_tags(
+                scene.enhanced_narration
+            )
+
+        return plan
 
 
 # Alias to support alternate naming/typos

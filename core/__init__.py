@@ -1,5 +1,6 @@
 """Core module exports."""
 
+from core.audio_utils import normalize_inline_audio_tags
 from core.caption_utils import (
     format_srt_timestamp,
     generate_srt_content,
@@ -45,6 +46,7 @@ __all__ = [
     "format_srt_timestamp",
     "generate_srt_content",
     "get_db_manager",
+    "normalize_inline_audio_tags",
     "save_srt_subtitles",
     "split_text_into_caption_cues",
     "strip_audio_tags",

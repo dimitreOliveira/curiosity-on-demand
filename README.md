@@ -4,7 +4,7 @@
 
 # Curiosity On Demand
 
-Curiosity On Demand is an automated educational video research, scripting, narration synthesis, and SVG/Canvas animation pipeline orchestrated via Telegram. It takes a user-submitted topic, performs grounded web research using Gemini with Google Search Grounding, enables interactive human-in-the-loop review of research findings, synthesizes scene-by-scene narration scripts, plans voice talent direction with emotional audio tags, synthesizes natural-language speech via Gemini TTS (`gemini-3.1-flash-tts-preview`) with sample voice review, designs visual styles with sample frame review, generates SVG + HTML5 Canvas animations for all scenes, and renders and concatenates them into a finished master MP4 video with synchronized voiceover.
+Curiosity On Demand is an automated educational video research, scripting, narration synthesis, and SVG/Canvas animation pipeline orchestrated via Telegram. It takes a user-submitted topic, performs grounded web research using Gemini with Google Search Grounding, enables interactive human-in-the-loop review of research findings, synthesizes scene-by-scene narration scripts, plans voice talent direction with inline vocal audio tags, synthesizes natural-language speech via Gemini TTS (`gemini-3.8-flash-tts`) with sample voice review, designs visual styles with sample frame review, generates SVG + HTML5 Canvas animations for all scenes, and renders and concatenates them into a finished master MP4 video with synchronized voiceover.
 
 ---
 
@@ -110,7 +110,7 @@ Curiosity On Demand is an automated educational video research, scripting, narra
 
 - **Language & Runtime:** Python 3.12+, AsyncIO
 - **AI & LLM Grounding:** Google GenAI SDK (`google-genai` 2.0+) using `gemini-3.7-flash` / `gemini-3.8-flash` with native Google Search tool and structured JSON schemas
-- **Voiceover Speech Generation:** Gemini TTS (`gemini-3.1-flash-tts-preview`) with natural-language directorial prompts and inline emotional audio tags
+- **Voiceover Speech Generation:** Gemini TTS (`gemini-3.8-flash-tts`) with natural-language directorial prompts and inline angle-bracket vocal/pause tags (`<short pause>`, `<long pause>`, `<gasp>`, `<sigh>`)
 - **Animation & Rendering:** Playwright (Headless Chromium for deterministic SVG + HTML5 Canvas frame-stepping) and `imageio-ffmpeg` for single-pass MP4 video encoding and audio multiplexing
 - **YouTube Publishing & Captions:** Google YouTube Data API v3 (`google-api-python-client`, `google-auth-oauthlib`) with automatic chapter timestamps, synchronized `.srt` subtitle generation and upload, hashtags, and Shorts format support
 - **Cost & Token Tracking:** Granular per-component usage logging (input/output tokens, search grounding queries, TTS audio duration, and estimated USD cost) with automatic Telegram breakdown reports

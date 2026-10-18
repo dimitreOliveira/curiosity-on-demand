@@ -246,23 +246,23 @@ def test_calculate_scene_budget():
     assert max_s <= 5
     assert avg_dur <= 20
 
-    # 2 min (120s) -> 5 to 7 scenes (~20s each)
+    # 2 min (120s) -> 4 to 5 scenes (~30s each)
     min_s, max_s, avg_dur = calculate_scene_budget(120)
-    assert min_s == 5
-    assert max_s == 7
-    assert avg_dur == 20
+    assert min_s == 4
+    assert max_s == 5
+    assert avg_dur == 30
 
-    # 5 min (300s) -> 14 to 16 scenes (~20s each)
+    # 5 min (300s) -> 9 to 11 scenes (~30s each)
     min_s, max_s, avg_dur = calculate_scene_budget(300)
-    assert min_s == 14
-    assert max_s == 16
-    assert avg_dur == 20
+    assert min_s == 9
+    assert max_s == 11
+    assert avg_dur == 30
 
-    # 10 min (600s) -> 29 to 30 scenes (~20s each)
+    # 10 min (600s) -> 19 to 21 scenes (~30s each)
     min_s, max_s, avg_dur = calculate_scene_budget(600)
-    assert min_s == 29
-    assert max_s == 30
-    assert avg_dur == 20
+    assert min_s == 19
+    assert max_s == 21
+    assert avg_dur == 30
 
     # 30 min (1800s) -> clamped to max_scenes=30
     min_s, max_s, avg_dur = calculate_scene_budget(1800)

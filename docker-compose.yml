@@ -4,6 +4,7 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: curiosity-on-demand
+    shm_size: "2gb"
     env_file:
       - .env
     volumes:
