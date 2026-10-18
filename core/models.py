@@ -114,6 +114,27 @@ class Script(BaseModel):
     )
 
 
+class SceneVisualDirection(BaseModel):
+    """Per-scene visual composition and camera blueprint for cross-scene diversity and continuity."""
+
+    scene_number: int = Field(
+        description="Sequential index of the scene matching the script"
+    )
+    composition_type: str = Field(
+        description="Distinct compositional archetype for this scene (e.g., 'Wide Panoramic Establishing Shot', 'Intimate Macro Close-Up', 'Split-Screen Visual Comparison', 'Isometric Process Cutaway', 'Abstract Metaphorical Particle Flow')"
+    )
+    camera_movement: str = Field(
+        description="2D virtual camera choreography for this scene (e.g., 'Slow push-in dolly to center subject', 'Pull-back reveal from macro detail to wide scale', 'Smooth lateral pan across stages', 'Dynamic zoom-through transition')"
+    )
+    focal_subject: str = Field(
+        description="Primary visual hero element, mechanism, or metaphor anchoring this scene"
+    )
+    transition_hook: str = Field(
+        default="",
+        description="How this scene visually connects from the previous scene and leads into the next scene",
+    )
+
+
 class AnimationStyle(BaseModel):
     """Visual theme and design aesthetic chosen for video animations."""
 
@@ -137,6 +158,10 @@ class AnimationStyle(BaseModel):
     background_tone: str = Field(
         default="warm",
         description="Overall background mood and brightness direction for the visual style (e.g., 'warm parchment', 'cool dark atmospheric', 'soft pastel', 'vibrant saturated', 'clean white studio', 'deep oceanic', 'sunset gradient'). Guides whether scene animations use dark, light, warm, or colored backgrounds.",
+    )
+    scene_directions: list[SceneVisualDirection] = Field(
+        default_factory=list,
+        description="Per-scene compositional blueprints ensuring adjacent scenes never repeat the same layout or camera framing",
     )
 
 

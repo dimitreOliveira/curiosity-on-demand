@@ -83,14 +83,30 @@ class AnimationRenderer:
         width: int | None = None,
         height: int | None = None,
         wait_ms: int = 600,
+        duration_seconds: float | None = None,
+        sample_progress: float = 0.55,
     ) -> Path:
-        """Render standalone HTML/SVG/Canvas code and capture a high-resolution PNG snapshot."""
+        """Render standalone HTML/SVG/Canvas code deterministically at climax/mid-scene and capture a lossless PNG snapshot."""
         w = width or self.settings.video_width
         h = height or self.settings.video_height
 
+        # Resolve target virtual timestamp for deterministic peak visual frame capture
+        clamped_progress = max(0.05, min(0.95, float(sample_progress)))
+        scene_dur = float(
+            duration_seconds
+            if duration_seconds is not None and duration_seconds > 0
+            else self.settings.default_scene_duration_seconds
+        )
+        target_virtual_ms = scene_dur * clamped_progress * 1000.0
+
         output_image_path.parent.mkdir(parents=True, exist_ok=True)
         logger.info(
-            "Rendering sample frame snapshot (%dx%d) to %s", w, h, output_image_path
+            "Rendering deterministic sample frame snapshot (%dx%d @ %.1fs [%.0f%%]) to %s",
+            w,
+            h,
+            target_virtual_ms / 1000.0,
+            clamped_progress * 100,
+            output_image_path,
         )
 
         async with async_playwright() as p:
@@ -100,9 +116,19 @@ class AnimationRenderer:
                     viewport={"width": w, "height": h},
                     device_scale_factor=1,
                 )
+                if hasattr(page, "add_init_script"):
+                    await page.add_init_script(DETERMINISTIC_TIME_SHIM)
                 await page.set_content(html_content, wait_until="domcontentloaded")
-                # Wait for initial canvas drawing loops and styles to settle
-                await page.wait_for_timeout(wait_ms)
+                if hasattr(page, "evaluate"):
+                    # Step initial frame (t=0) to initialize startTime, then step to peak visual phase
+                    await page.evaluate(
+                        "if (window.__stepVirtualFrame) { window.__stepVirtualFrame(0.0); }"
+                    )
+                    await page.evaluate(
+                        f"if (window.__stepVirtualFrame) {{ window.__stepVirtualFrame({target_virtual_ms:.1f}); }}"
+                    )
+                if wait_ms > 0:
+                    await page.wait_for_timeout(wait_ms)
                 await page.screenshot(path=str(output_image_path), full_page=False)
             finally:
                 await browser.close()
@@ -125,7 +151,7 @@ class AnimationRenderer:
         fps: int,
         audio_path: Path | None = None,
     ) -> Path:
-        """Deterministically step HTML canvas frames and encode directly to MP4 (with optional single-pass audio mux)."""
+        """Deterministically step HTML canvas frames and encode directly to MP4 via lossless PNG pipe (with optional single-pass audio mux)."""
         native_duration = max(0.1, float(duration_seconds))
         valid_audio = (
             audio_path
@@ -154,14 +180,14 @@ class AnimationRenderer:
 
         total_frames = max(1, round(target_duration * fps))
 
-        # Build single-pass FFmpeg command reading deterministic JPEG frames from image2pipe stdin
+        # Build single-pass FFmpeg command reading deterministic lossless PNG frames from image2pipe stdin
         cmd = [
             self.ffmpeg_path,
             "-y",
             "-f",
             "image2pipe",
             "-vcodec",
-            "mjpeg",
+            "png",
             "-framerate",
             str(fps),
             "-i",
@@ -178,9 +204,11 @@ class AnimationRenderer:
                 "-c:v",
                 "libx264",
                 "-preset",
-                "fast",
+                "medium",
+                "-tune",
+                "animation",
                 "-crf",
-                "22",
+                "18",
                 "-pix_fmt",
                 "yuv420p",
                 "-r",
@@ -189,7 +217,7 @@ class AnimationRenderer:
         )
 
         if valid_audio is not None:
-            cmd.extend(["-c:a", "aac"])
+            cmd.extend(["-c:a", "aac", "-b:a", "192k"])
 
         cmd.extend(["-movflags", "+faststart", str(output_video_path)])
 
@@ -222,8 +250,7 @@ class AnimationRenderer:
 
                     await page.evaluate(f"window.__stepVirtualFrame({virtual_time_ms})")
                     frame_bytes = await page.screenshot(
-                        type="jpeg",
-                        quality=90,
+                        type="png",
                         full_page=False,
                     )
                     if proc.stdin is not None:
@@ -539,9 +566,11 @@ class AnimationRenderer:
             "-c:v",
             "libx264",
             "-preset",
-            "fast",
+            "medium",
+            "-tune",
+            "animation",
             "-crf",
-            "22",
+            "18",
             "-pix_fmt",
             "yuv420p",
             "-an",
@@ -615,13 +644,17 @@ class AnimationRenderer:
             "-c:v",
             "libx264",
             "-preset",
-            "fast",
+            "medium",
+            "-tune",
+            "animation",
             "-crf",
-            "22",
+            "18",
             "-pix_fmt",
             "yuv420p",
             "-c:a",
             "aac",
+            "-b:a",
+            "192k",
             "-movflags",
             "+faststart",
             str(output_path),
@@ -749,13 +782,17 @@ class AnimationRenderer:
                         "-c:v",
                         "libx264",
                         "-preset",
-                        "fast",
+                        "medium",
+                        "-tune",
+                        "animation",
                         "-crf",
-                        "22",
+                        "18",
                         "-pix_fmt",
                         "yuv420p",
                         "-c:a",
                         "aac",
+                        "-b:a",
+                        "192k",
                         "-movflags",
                         "+faststart",
                         str(output_video_path),
@@ -866,13 +903,17 @@ class AnimationRenderer:
                         "-c:v",
                         "libx264",
                         "-preset",
-                        "fast",
+                        "medium",
+                        "-tune",
+                        "animation",
                         "-crf",
-                        "22",
+                        "18",
                         "-pix_fmt",
                         "yuv420p",
                         "-c:a",
                         "aac",
+                        "-b:a",
+                        "192k",
                         "-movflags",
                         "+faststart",
                         str(output_video_path),
@@ -958,9 +999,11 @@ class AnimationRenderer:
                     "-c:v",
                     "libx264",
                     "-preset",
-                    "fast",
+                    "medium",
+                    "-tune",
+                    "animation",
                     "-crf",
-                    "22",
+                    "18",
                     "-pix_fmt",
                     "yuv420p",
                     "-movflags",

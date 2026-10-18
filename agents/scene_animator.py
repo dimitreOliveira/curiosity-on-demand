@@ -12,11 +12,35 @@ from core.models import (
     AnimationStyle,
     NarrationStoryboard,
     SceneAnimation,
+    SceneVisualDirection,
     Script,
     ScriptScene,
 )
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_COMPOSITION_ARCHETYPES: tuple[tuple[str, str], ...] = (
+    (
+        "Full-Bleed Panoramic Establishing Shot",
+        "Slow, sweeping dolly push-in across layered atmospheric depth",
+    ),
+    (
+        "Intimate Macro Close-Up Study",
+        "Tight focus filling 75%+ of the viewport with subtle orbital drift and internal mechanism reveal",
+    ),
+    (
+        "Dynamic Split-Screen / Side-by-Side Comparison",
+        "Synchronized dual-frame contrast with smooth lateral camera balance",
+    ),
+    (
+        "Isometric / Cross-Section Process Cutaway",
+        "Clean architectural cutaway with progressive zoom across interconnected stages",
+    ),
+    (
+        "Abstract Metaphorical & Particle Flow Sequence",
+        "Fluid camera tracking following morphing geometry, field lines, and luminous particle currents",
+    ),
+)
 
 SCENE_ANIMATOR_SYSTEM_PROMPT = """You are a World-Class Creative Motion Designer, Art Director, and Master Creative Coder for Curiosity On Demand, an elite educational video channel.
 
@@ -24,10 +48,12 @@ Your mission is to generate standalone, executable, high-fidelity HTML5 Canvas /
 
 ### 🎨 Core Aesthetic Principles:
 
-1. **Living, Continuous Motion:**
-   - Use `requestAnimationFrame` with delta-time for smooth animation. Structure narrative progression using timed phases or state transitions across the scene's duration.
+1. **Living, Continuous Motion & Strict Delta-Time / Elapsed-Time Physics (CRITICAL):**
+   - Use `requestAnimationFrame` with true delta-time (`dt = Math.min(0.1, (timestamp - lastTimestamp) / 1000)`) and total elapsed seconds (`elapsed = (timestamp - startTime) / 1000`).
+   - **NEVER use fixed per-frame increments** like `p.x += p.vx`, `angle += 0.02`, or `pkt.t += 0.016` that assume a hardcoded 60fps tick rate! Because scenes are rendered via deterministic virtual-time stepping and time-scaled to match voiceover audio, unscaled per-frame increments cause severe speed warping.
+   - Instead, ALL motion, particle velocities, wave oscillations, and physics updates MUST either be pure deterministic functions of `elapsed` (e.g., `const x = ( p.baseX + p.vx * elapsed ) % W`) or explicitly multiplied by `dt` in seconds (`p.x += p.vx * dt`, where `vx` is in pixels per second).
    - The canvas must NEVER freeze or hold a static frame. If the narrative timeline concludes, transition into continuous ambient motion (breathing entities, floating particles, pulsating glows, gentle camera drifts, oscillating waves).
-   - Use normalized progress (`time / DURATION`) for narrative pacing combined with continuous ambient oscillators so motion never stops.
+   - Use normalized progress (`progress = Math.min(1.0, elapsed / DURATION)`) for narrative pacing combined with `elapsed`-driven oscillators so motion never stops.
 
 2. **Multi-Act Visual Progression:**
    - Divide the timeline into 2–3 distinct visual phases:
@@ -37,7 +63,7 @@ Your mission is to generate standalone, executable, high-fidelity HTML5 Canvas /
 
 3. **Rich Organic Illustration & Shape Craft:**
    - Draw characters, creatures, objects, and environments with expressive artistic craftsmanship using smooth Bezier and quadratic curves, arcs, and gradients — not crude geometric boxes or stick figures.
-   - Use harmonic oscillation for natural secondary motion (breathing, swaying, swimming, flapping, walking).
+   - Use harmonic oscillation (`Math.sin(elapsed * freq + phase)`) for natural secondary motion (breathing, swaying, swimming, flapping, walking).
    - Apply multi-tone shading (base color, highlights, shadows) and soft drop shadows to give subjects tactile depth.
 
 4. **Scenic Atmosphere, Background & Lighting:**
@@ -46,18 +72,13 @@ Your mission is to generate standalone, executable, high-fidelity HTML5 Canvas /
    - Use a dynamic 2D virtual camera (position, zoom) with smooth interpolation for cinematic depth. Dolly in for detail, zoom out for scale.
 
 5. **Dynamic Particles & Visual FX:**
-   - Include array-based particle systems suited to the scene: floating dust motes, pollen, embers, water droplets, rising steam, energy sparks, or drifting petals.
+   - Include array-based particle systems suited to the scene: floating dust motes, pollen, embers, water droplets, rising steam, energy sparks, or drifting petals — all updated strictly using `dt` (in seconds) or `elapsed`.
    - Add motion trails for fast-moving entities, and subtle screen shake or color pulses on climax moments.
-   - Apply realistic motion physics where appropriate: velocity, gravity, friction, angular spin, easing.
+   - Apply realistic time-based motion physics where appropriate: velocity (`px/s`), gravity (`px/s²`), damping, angular velocity (`rad/s`), and smooth easing.
 
-6. **Compositional Variety (CRITICAL — break visual monotony):**
-   - Do NOT default to the same layout every scene. Vary compositions across scenes:
-     * Full-bleed panoramic establishing shots where the environment fills the entire canvas.
-     * Intimate close-up studies where a single entity or mechanism fills 70%+ of the frame.
-     * Split compositions or side-by-side visual comparisons.
-     * Abstract metaphorical sequences using only shapes, particles, and color morphing — no text at all.
-     * Dramatic camera zooms or dolly-throughs that reveal layers of depth.
-   - Let the scene's narrative and emotional beat dictate the framing — an intro scene might use a wide panoramic, while a detail scene zooms in tight.
+6. **Compositional Variety & Cross-Scene Continuity (CRITICAL — break visual monotony):**
+   - Strictly follow the assigned **Scene Compositional Blueprint** (`composition_type` and `camera_movement`) provided in the prompt so adjacent scenes never repeat the same layout.
+   - Honor the **Adjacent Scene Context** (Previous Scene and Next Scene) to maintain visual continuity of recurring metaphors, entities, and color motifs while making the framing of the current scene feel fresh and purposeful.
 
 ### 📝 Text & Typography on Canvas (CRITICAL — read carefully):
 
@@ -103,6 +124,29 @@ def extract_html_code(raw_text: str) -> str:
     return text
 
 
+def resolve_scene_direction(
+    scene: ScriptScene,
+    style: AnimationStyle,
+) -> SceneVisualDirection:
+    """Resolve explicit or fallback compositional blueprint for a specific scene."""
+    if style.scene_directions:
+        for direction in style.scene_directions:
+            if direction.scene_number == scene.scene_number:
+                return direction
+
+    archetype_idx = (max(1, scene.scene_number) - 1) % len(
+        DEFAULT_COMPOSITION_ARCHETYPES
+    )
+    comp_type, cam_move = DEFAULT_COMPOSITION_ARCHETYPES[archetype_idx]
+    return SceneVisualDirection(
+        scene_number=scene.scene_number,
+        composition_type=comp_type,
+        camera_movement=cam_move,
+        focal_subject=scene.title,
+        transition_hook="Maintain visual motif continuity while shifting camera framing from adjacent scenes.",
+    )
+
+
 class SceneAnimatorAgent(BaseAgent):
     """Generates standalone executable SVG + HTML5 Canvas animations for individual script scenes."""
 
@@ -122,6 +166,10 @@ class SceneAnimatorAgent(BaseAgent):
         height: int | None = None,
         is_vertical: bool | None = None,
         total_video_duration: float | None = None,
+        previous_scene: ScriptScene | None = None,
+        next_scene: ScriptScene | None = None,
+        scene_direction: SceneVisualDirection | None = None,
+        total_scenes: int | None = None,
     ) -> SceneAnimation:
         """Generate standalone HTML5 Canvas animation code for an individual scene unconstrained by JSON schema."""
         target_duration = round(
@@ -149,14 +197,17 @@ class SceneAnimatorAgent(BaseAgent):
             vertical = False
             w, h = self.settings.video_width, self.settings.video_height
 
+        resolved_direction = scene_direction or resolve_scene_direction(scene, style)
+
         logger.info(
-            "Generating animation code for Scene %d ('%s', %.2fs, %dx%d %s) in style '%s'",
+            "Generating animation code for Scene %d ('%s', %.2fs, %dx%d %s, composition='%s') in style '%s'",
             scene.scene_number,
             scene.title,
             target_duration,
             w,
             h,
             "vertical" if vertical else "horizontal",
+            resolved_direction.composition_type,
             style.style_name,
         )
 
@@ -176,6 +227,38 @@ class SceneAnimatorAgent(BaseAgent):
                 f"- Framing & Composition: Compose elements across the standard widescreen canvas ({w}px width by {h}px height)."
             )
 
+        # Build cross-scene continuity context
+        continuity_lines: list[str] = []
+        if previous_scene is not None:
+            prev_dir = resolve_scene_direction(previous_scene, style)
+            continuity_lines.append(
+                f"- Previous Scene (Scene {previous_scene.scene_number} - '{previous_scene.title}'): "
+                f"{previous_scene.summary} | Visuals: {previous_scene.description} "
+                f"[Used composition: {prev_dir.composition_type} — DO NOT repeat this exact layout]"
+            )
+        else:
+            continuity_lines.append(
+                "- Previous Scene: None (This is the opening hook of the video — establish an unforgettable visual first impression)."
+            )
+
+        if next_scene is not None:
+            next_dir = resolve_scene_direction(next_scene, style)
+            continuity_lines.append(
+                f"- Next Scene (Scene {next_scene.scene_number} - '{next_scene.title}'): "
+                f"{next_scene.summary} [Upcoming composition: {next_dir.composition_type}]"
+            )
+        else:
+            continuity_lines.append(
+                "- Next Scene: None (This is the final resolution scene of the video — deliver a memorable visual culmination)."
+            )
+
+        continuity_block = "\n".join(continuity_lines)
+        scene_position_str = (
+            f"{scene.scene_number} of {total_scenes}"
+            if total_scenes
+            else str(scene.scene_number)
+        )
+
         prompt = (
             f"Topic: {topic}\n\n"
             f"Visual Design System:\n"
@@ -185,19 +268,26 @@ class SceneAnimatorAgent(BaseAgent):
             f"- Background Tone & Atmosphere: {style.background_tone}\n"
             f"- Typography: {style.font_family}\n"
             f"- Motion & Animation Guidelines: {style.animation_guidelines}\n\n"
+            f"Scene Compositional Blueprint (MANDATORY for Compositional Diversity):\n"
+            f"- Assigned Composition Archetype: {resolved_direction.composition_type}\n"
+            f"- Assigned 2D Camera Choreography: {resolved_direction.camera_movement}\n"
+            f"- Primary Focal Hero Subject: {resolved_direction.focal_subject}\n"
+            f"- Visual Continuity & Transition Hook: {resolved_direction.transition_hook or 'Smoothly bridge visual motifs across adjacent scenes.'}\n\n"
+            f"Cross-Scene Narrative Continuity:\n"
+            f"{continuity_block}\n\n"
             f"Target Scene Specification:\n"
-            f"- Scene Number: {scene.scene_number}\n"
+            f"- Scene Position: {scene_position_str}\n"
             f"- Title: {scene.title}\n"
             f"- Concept Summary: {scene.summary}\n"
             f"- Visual Description: {scene.description}\n"
             f"- Spoken Narration (for pacing/context only — do NOT display on screen): {scene.narration}\n"
-            f"- Playback Duration: {target_duration:.2f} seconds\n"
+            f"- Exact Playback Duration: {target_duration:.2f} seconds\n"
             f"{format_spec}\n\n"
             f"Instructions:\n"
             f"Generate a complete, standalone HTML5 Canvas animation for this scene ({w}x{h}, {'vertical 9:16' if vertical else 'horizontal 16:9'}). "
-            f"Match the visual style, color palette, and background tone specified above. "
-            f"Focus on rich, topic-appropriate illustration with scenic depth, organic motion, smooth curves, "
-            f"dynamic camera movements, and multi-act visual progression calibrated for {target_duration:.2f} seconds. "
+            f"Match the visual style, color palette, background tone, and the assigned '{resolved_direction.composition_type}' composition. "
+            f"Calibrate the multi-act progression (`const DURATION = {target_duration:.2f};`) to match the exact {target_duration:.2f}s duration. "
+            f"Use true delta-time (`dt` in seconds) or `elapsed` (in seconds) for ALL particle velocities, oscillations, and physics updates — never use hardcoded per-frame increments. "
             f"The canvas should feel like a premium illustrated documentary frame — open, cinematic, immersive. "
             f"Voiceover narration plays as spoken audio. Only include minimal, purposeful text (scene title, essential callouts). "
             f"Return ONLY the executable <!DOCTYPE html> document."
@@ -215,7 +305,7 @@ class SceneAnimatorAgent(BaseAgent):
             title=scene.title,
             html_content=html_content,
             duration_seconds=target_duration,
-            notes=f"Generated in style: {style.style_name}",
+            notes=f"Generated in style: {style.style_name} ({resolved_direction.composition_type})",
         )
 
     async def animate_storyboard(
@@ -233,19 +323,32 @@ class SceneAnimatorAgent(BaseAgent):
         is_vertical: bool | None = None,
         total_video_duration: float | None = None,
     ) -> AnimationStoryboard:
-        """Generate animations for all scenes in parallel using native animation durations.
-
-        Visual animations are rendered at their native duration (100% active motion).
-        The video renderer then stretches or compresses playback speed via FFmpeg
-        to perfectly match the narration audio duration with zero frozen frames.
-        """
+        """Generate animations for all scenes in parallel calibrated to synthesized audio durations."""
         max_concurrency = concurrency or self.DEFAULT_CONCURRENCY
+
+        # Build per-scene duration lookup prioritizing explicit scene_durations and synthesized TTS audio durations
+        resolved_scene_durations: dict[int, float] = {}
+        if narration_storyboard and narration_storyboard.scenes_audio:
+            for s_audio in narration_storyboard.scenes_audio:
+                if s_audio.duration_seconds and s_audio.duration_seconds > 0:
+                    resolved_scene_durations[s_audio.scene_number] = float(
+                        s_audio.duration_seconds
+                    )
+        if scene_durations:
+            for s_num, s_dur in scene_durations.items():
+                if s_dur and s_dur > 0:
+                    resolved_scene_durations[int(s_num)] = float(s_dur)
 
         # Resolve total video duration to determine format if not explicitly supplied
         total_dur = total_video_duration or 0.0
         if total_dur <= 0:
             if narration_storyboard and narration_storyboard.total_duration_seconds > 0:
                 total_dur = narration_storyboard.total_duration_seconds
+            elif resolved_scene_durations and script and script.scenes:
+                total_dur = sum(
+                    resolved_scene_durations.get(s.scene_number, s.duration_seconds)
+                    for s in script.scenes
+                )
             elif script and script.scenes:
                 total_dur = sum(s.duration_seconds for s in script.scenes)
 
@@ -271,22 +374,24 @@ class SceneAnimatorAgent(BaseAgent):
                 self.settings.video_height,
             )
 
+        total_scenes = len(script.scenes)
         logger.info(
-            "Generating storyboard (%d scenes, concurrency=%d, %dx%d %s) for topic '%s' in style '%s'",
-            len(script.scenes),
+            "Generating storyboard (%d scenes, concurrency=%d, %dx%d %s, audio_synced_durations=%s) for topic '%s' in style '%s'",
+            total_scenes,
             max_concurrency,
             resolved_w,
             resolved_h,
             "vertical" if resolved_vertical else "horizontal",
+            bool(resolved_scene_durations),
             topic,
             style.style_name,
         )
 
         semaphore = asyncio.Semaphore(max_concurrency)
 
-        async def _animate_with_sem(scene: ScriptScene) -> SceneAnimation:
+        async def _animate_with_sem(idx: int, scene: ScriptScene) -> SceneAnimation:
             native_duration = (
-                (scene_durations.get(scene.scene_number) if scene_durations else None)
+                resolved_scene_durations.get(scene.scene_number)
                 or default_duration
                 or scene.duration_seconds
                 or self.settings.default_scene_duration_seconds
@@ -297,7 +402,15 @@ class SceneAnimatorAgent(BaseAgent):
                     "Reusing pre-generated approved Scene 1 animation (native duration: %.2fs)",
                     sample_scene_1.duration_seconds,
                 )
+                if resolved_scene_durations.get(1):
+                    sample_scene_1.duration_seconds = round(
+                        float(resolved_scene_durations[1]), 2
+                    )
                 return sample_scene_1
+
+            prev_scene = script.scenes[idx - 1] if idx > 0 else None
+            nxt_scene = script.scenes[idx + 1] if idx + 1 < total_scenes else None
+            direction = resolve_scene_direction(scene, style)
 
             async with semaphore:
                 return await self.animate_scene(
@@ -309,9 +422,15 @@ class SceneAnimatorAgent(BaseAgent):
                     height=resolved_h,
                     is_vertical=resolved_vertical,
                     total_video_duration=total_dur,
+                    previous_scene=prev_scene,
+                    next_scene=nxt_scene,
+                    scene_direction=direction,
+                    total_scenes=total_scenes,
                 )
 
-        tasks = [_animate_with_sem(scene) for scene in script.scenes]
+        tasks = [
+            _animate_with_sem(idx, scene) for idx, scene in enumerate(script.scenes)
+        ]
         scenes_animations = await asyncio.gather(*tasks)
 
         # Ensure ordered by scene number

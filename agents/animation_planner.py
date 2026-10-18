@@ -30,13 +30,15 @@ Your mission is to analyze the entire video narrative script and design a cohesi
   * Examples: 'warm parchment' (#F7F3E9), 'soft morning sky' (light blue-pink gradient), 'clean white studio', 'golden hour warmth', 'deep oceanic blue', 'sunset coral gradient', 'cool dark atmospheric' (only when justified).
 - The chosen background tone must harmonize with the color_palette — backgrounds and foreground elements need contrast for readability.
 
-### 🎬 Compositional Diversity Across Scenes (CRITICAL):
-- A great video avoids visual monotony by varying the composition and camera framing from scene to scene. Specify in your animation_guidelines at least 2–3 different compositional approaches that scenes should alternate between. Examples:
+### 🎬 Compositional Diversity & Per-Scene Blueprints (CRITICAL):
+- A great video avoids visual monotony by varying the composition and camera framing from scene to scene.
+- Populate `scene_directions` with an entry for EVERY scene in the script, assigning a distinct `composition_type`, `camera_movement`, `focal_subject`, and `transition_hook` so that no two adjacent scenes share the same framing or layout.
+- Alternate across diverse compositional archetypes such as:
   * Full-bleed panoramic establishing shots (environment fills the entire canvas)
   * Intimate close-up character or object studies (entity fills 70%+ of frame)
   * Split compositions or side-by-side comparisons
   * Abstract metaphorical sequences (shapes, particles, color morphs — no text)
-  * Diagram or process-flow layouts with clean infographic framing
+  * Diagram or process-flow cutaway layouts with clean infographic framing
   * Dramatic camera dolly or zoom-through transitions
 - Scenes should NOT all follow the same "title header at top → centered entity → annotation at bottom" layout.
 
@@ -52,7 +54,7 @@ Your mission is to analyze the entire video narrative script and design a cohesi
 4. **Typography:** Font stack suited for clean, beautiful title cards and diagram callouts (e.g., 'Inter, sans-serif', 'Outfit, sans-serif', 'Cinzel, Georgia, serif', 'Playfair Display, Georgia, serif').
 5. **Animation Guidelines:** Motion design principles (easing, pacing, particle density, camera feel, state transitions) plus compositional variety guidance for scene-to-scene diversity.
 6. **Background Tone:** The overall mood and brightness of the background atmosphere (e.g., 'warm parchment', 'soft pastel gradient', 'clean white studio', 'deep atmospheric'). This is crucial for setting the right emotional register.
-7. **Visual Continuity & Metaphors:** Specific visual motifs, metaphors, or character/diagram designs that must remain consistent across scenes.
+7. **Scene Directions (`scene_directions`):** A complete per-scene list mapping each `scene_number` to a bespoke `composition_type`, `camera_movement`, `focal_subject`, and `transition_hook` that links the visual journey across scenes.
 """
 
 
@@ -111,6 +113,10 @@ class AnimationPlannerAgent(BaseAgent):
         )
 
         if feedback and previous_style:
+            prev_directions = "\n".join(
+                f"  - Scene {d.scene_number}: [{d.composition_type}] Camera: {d.camera_movement} | Subject: {d.focal_subject}"
+                for d in previous_style.scene_directions
+            )
             prompt = (
                 f"{base_context}\n\n"
                 f"===================================================\n"
@@ -120,19 +126,21 @@ class AnimationPlannerAgent(BaseAgent):
                 f"Palette: {', '.join(previous_style.color_palette)}\n"
                 f"Typography: {previous_style.font_family}\n"
                 f"Guidelines: {previous_style.animation_guidelines}\n"
+                f"Scene Directions:\n{prev_directions or '  (None)'}\n"
                 f"===================================================\n\n"
                 f"USER REVISION FEEDBACK:\n"
                 f"{feedback}\n\n"
-                f"Please update the AnimationStyle according to the user's feedback. "
-                f"Ensure the revised design system, color palette, and animation guidelines provide complete clarity "
-                f"for creative coders implementing scene-by-scene HTML5 Canvas animations."
+                f"Please update the AnimationStyle (including `scene_directions` for all {len(script.scenes)} scenes) "
+                f"according to the user's feedback. Ensure the revised design system, color palette, and per-scene "
+                f"compositional blueprints provide complete clarity for creative coders implementing HTML5 Canvas animations."
             )
         else:
             prompt = (
                 f"{base_context}\n\n"
                 f"Please formulate the ideal, bespoke AnimationStyle that uniquely complements the topic '{topic}'. "
                 f"Select the palette, mood, background tone, typography, and motion guidelines completely freely to best serve the subject matter. "
-                f"Ensure the design system ensures visual continuity and narrative impact across all {len(script.scenes)} scenes."
+                f"Provide `scene_directions` for all {len(script.scenes)} scenes, ensuring varied compositional archetypes, "
+                f"dynamic camera movements, and seamless visual continuity across adjacent scenes."
             )
 
         return await self.generate_structured(

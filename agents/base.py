@@ -27,10 +27,33 @@ class BaseAgent:
 
         # Initialize the official Google GenAI Client
         # If gemini_api_key is empty, the SDK will look for GEMINI_API_KEY in os.environ
+        vertexai = self.settings.gemini_use_vertexai or None
+        project = (
+            self.settings.google_cloud_project.strip()
+            if self.settings.gemini_use_vertexai
+            and self.settings.google_cloud_project.strip()
+            else None
+        )
+        location = (
+            self.settings.google_cloud_location.strip()
+            if self.settings.gemini_use_vertexai
+            and project
+            and self.settings.google_cloud_location.strip()
+            else None
+        )
         if self.settings.gemini_api_key:
-            self.client = genai.Client(api_key=self.settings.gemini_api_key)
+            self.client = genai.Client(
+                vertexai=vertexai,
+                api_key=self.settings.gemini_api_key,
+                project=project,
+                location=location,
+            )
         else:
-            self.client = genai.Client()
+            self.client = genai.Client(
+                vertexai=vertexai,
+                project=project,
+                location=location,
+            )
 
     async def _record_response_usage(
         self,

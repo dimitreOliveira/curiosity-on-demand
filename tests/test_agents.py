@@ -28,6 +28,23 @@ async def test_base_agent_generate_text(mock_settings):
     assert result == "Grounded research notes from Google Search."
 
 
+def test_base_agent_vertexai_initialization(mock_settings):
+    """Test BaseAgent initializes GenAI client with vertexai=True, project, and location when configured."""
+    assert BaseAgent(settings=mock_settings).client.vertexai is False
+
+    vertex_settings = mock_settings.model_copy(
+        update={
+            "gemini_use_vertexai": True,
+            "google_cloud_project": "test-project-123",
+            "google_cloud_location": "global",
+        }
+    )
+    vertex_agent = BaseAgent(settings=vertex_settings)
+    assert vertex_agent.client.vertexai is True
+    assert vertex_agent.client._api_client.project == "test-project-123"
+    assert vertex_agent.client._api_client.location == "global"
+
+
 @pytest.mark.asyncio
 async def test_base_agent_generate_structured_direct(
     mock_settings, sample_research_report

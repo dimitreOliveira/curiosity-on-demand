@@ -648,11 +648,16 @@ async def test_renderer_deterministic_frame_stepping_and_single_pass_audio(
     assert mock_page.screenshot.call_count == 2
     assert mock_stdin.write.call_count == 2
 
-    # Verify FFmpeg command used image2pipe and included the audio file in a single pass
+    # Verify FFmpeg command used lossless png image2pipe, crf 18, animation tuning, and included the audio file in a single pass
     cmd_str = " ".join(executed_cmd)
     assert "-f image2pipe" in cmd_str
+    assert "-vcodec png" in cmd_str
+    assert "-tune animation" in cmd_str
+    assert "-crf 18" in cmd_str
     assert str(sample_wav_file.resolve()) in cmd_str
     assert "-c:a aac" in cmd_str
+    assert "-b:a 192k" in cmd_str
+    mock_page.screenshot.assert_called_with(type="png", full_page=False)
 
 
 @pytest.mark.asyncio
