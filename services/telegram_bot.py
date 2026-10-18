@@ -39,7 +39,6 @@ from core.cost_tracker import (
 )
 from core.database import DatabaseManager, get_db_manager
 from core.models import (
-    AnimationStoryboard,
     AnimationStyle,
     NarrationPlan,
     NarrationStoryboard,
@@ -1104,6 +1103,10 @@ class TelegramBotService:
             if not scene_1:
                 raise RuntimeError("Cannot animate: script contains no scenes.")
 
+            scene_2 = (
+                session.script.scenes[1] if len(session.script.scenes) > 1 else None
+            )
+
             s1_duration = scene_1.duration_seconds
             if session.sample_audio_path and Path(session.sample_audio_path).exists():
                 audio_dur = get_wav_duration(session.sample_audio_path)
@@ -1120,6 +1123,9 @@ class TelegramBotService:
                     height=video_height,
                     is_vertical=is_vertical,
                     total_video_duration=total_duration,
+                    previous_scene=None,
+                    next_scene=scene_2,
+                    total_scenes=len(session.script.scenes),
                 )
 
             # Persist Scene 1 HTML code
@@ -1129,7 +1135,7 @@ class TelegramBotService:
             scene_1_html_path = anim_dir / "scene_1.html"
             scene_1_html_path.write_text(scene_1_anim.html_content, encoding="utf-8")
 
-            # Render Scene 1 sample frame image snapshot (PNG)
+            # Render Scene 1 sample frame image snapshot (PNG) at climax/mid-scene
             render_dir = self.settings.renders_dir / project_folder
             render_dir.mkdir(parents=True, exist_ok=True)
             sample_frame_path = render_dir / "scene_1_sample.png"
@@ -1139,6 +1145,7 @@ class TelegramBotService:
                 output_image_path=sample_frame_path,
                 width=video_width,
                 height=video_height,
+                duration_seconds=s1_duration,
             )
 
             await self.db.save_style(
@@ -1307,6 +1314,9 @@ class TelegramBotService:
             style: AnimationStyle = session.style
             topic: str = session.topic
             narration_plan: NarrationPlan | None = session.narration_plan
+            existing_narration_sb: NarrationStoryboard | None = (
+                session.narration_storyboard
+            )
             sample_audio_path: str | None = session.sample_audio_path
 
             # Determine dynamic video format and dimensions based on duration
@@ -1316,10 +1326,10 @@ class TelegramBotService:
                 project_duration
             )
 
-            # Concurrently synthesize all scene voiceovers and generate scene canvas codes
+            # Synthesize all scene voiceovers first so exact WAV durations calibrate scene animation pacing
             async def _synthesize_voiceover() -> NarrationStoryboard | None:
                 if not narration_plan:
-                    return None
+                    return existing_narration_sb
                 audio_dir = self.settings.audio_dir / project_folder
                 audio_dir.mkdir(parents=True, exist_ok=True)
                 sample_s1_audio: SceneAudio | None = None
@@ -1340,31 +1350,36 @@ class TelegramBotService:
                         concurrency=self.settings.tts_concurrency,
                     )
 
-            async def _generate_animations() -> AnimationStoryboard:
-                with track_component(project_id, PipelineComponent.SCENE_ANIMATION):
-                    return await self.animator.animate_storyboard(
-                        topic=topic,
-                        script=script,
-                        style=style,
-                        sample_scene_1=sample_scene_1,
-                        concurrency=self.settings.animation_concurrency,
-                        width=video_width,
-                        height=video_height,
-                        is_vertical=is_vertical,
-                        total_video_duration=project_duration,
-                    )
-
-            # Execute voiceover synthesis and canvas code generation in parallel
-            narration_storyboard, storyboard = await asyncio.gather(
-                _synthesize_voiceover(),
-                _generate_animations(),
-            )
+            narration_storyboard = await _synthesize_voiceover()
 
             if narration_storyboard:
                 await self.db.save_narration_storyboard(
                     project_id=project_id,
                     storyboard=narration_storyboard,
                     final_audio_path=narration_storyboard.full_audio_path,
+                )
+
+            scene_durations_map: dict[int, float] | None = None
+            if narration_storyboard and narration_storyboard.scenes_audio:
+                scene_durations_map = {
+                    s_audio.scene_number: s_audio.duration_seconds
+                    for s_audio in narration_storyboard.scenes_audio
+                    if s_audio.duration_seconds and s_audio.duration_seconds > 0
+                }
+
+            with track_component(project_id, PipelineComponent.SCENE_ANIMATION):
+                storyboard = await self.animator.animate_storyboard(
+                    topic=topic,
+                    script=script,
+                    style=style,
+                    sample_scene_1=sample_scene_1,
+                    scene_durations=scene_durations_map,
+                    narration_storyboard=narration_storyboard,
+                    concurrency=self.settings.animation_concurrency,
+                    width=video_width,
+                    height=video_height,
+                    is_vertical=is_vertical,
+                    total_video_duration=project_duration,
                 )
 
             # Save HTML animation codes

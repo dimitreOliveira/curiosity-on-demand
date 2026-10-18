@@ -49,20 +49,21 @@ DEFAULT_PRICING: dict[str, dict[str, float]] = {
         "prompt_rate_per_m": 0.75,  # 1.50,
         "output_rate_per_m": 3.75,  # 7.50,
     },
-    "gemini-3.7-flash": {
-        "prompt_rate_per_m": 0.75,  # 1.50,
-        "output_rate_per_m": 3.75,  # 7.50,
-    },
     ## Pro
-    "gemini-3.1-pro-preview": {
+    "gemini-4-argon": {
         "prompt_rate_per_m": 2.00,
         "output_rate_per_m": 12.00,
     },
     # Gemini TTS
+    ## Flash-lite
+    "gemini-3.8-flash-lite-tts": {
+        "prompt_rate_per_m": 0.50,
+        "output_rate_per_m": 6.00,  # Audio candidate tokens
+    },
     ## Flash
-    "gemini-3.1-flash-tts-preview": {
-        "prompt_rate_per_m": 1.00,
-        "output_rate_per_m": 20.00,  # Audio candidate tokens
+    "gemini-3.8-flash-tts": {
+        "prompt_rate_per_m": 0.50,
+        "output_rate_per_m": 9.00,  # Audio candidate tokens
     },
     ## Pro
     "gemini-2.5-pro-preview-tts": {

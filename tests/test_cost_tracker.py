@@ -20,10 +20,10 @@ def test_cost_tracker_calculation():
     """Test cost calculation with various models, grounding queries, and audio durations."""
     tracker = CostTracker()
 
-    # 1. Standard text model (Gemini 3.7 Flash: $0.75/1M prompt, $3.75/1M output)
+    # 1. Standard text model (Gemini 3.8 Flash: $0.75/1M prompt, $3.75/1M output)
     # 1,000 prompt tokens = $0.00075, 2,000 output tokens = $0.0075 -> $0.00825
     cost = tracker.calculate_cost(
-        model_name="gemini-3.7-flash",
+        model_name="gemini-3.8-flash",
         prompt_tokens=1000,
         output_tokens=2000,
     )
@@ -31,22 +31,22 @@ def test_cost_tracker_calculation():
 
     # 2. Search Grounding query cost ($35 / 1k queries = $0.035 each)
     cost_with_search = tracker.calculate_cost(
-        model_name="gemini-3.7-flash",
+        model_name="gemini-3.8-flash",
         prompt_tokens=1000,
         output_tokens=2000,
         grounding_queries=2,
     )
     assert cost_with_search == pytest.approx(0.00825 + 0.070, rel=1e-4)
 
-    # 3. Gemini TTS audio model (pure token-based: $1.00/1M prompt, $20.00/1M output audio tokens)
+    # 3. Gemini TTS audio model (pure token-based: $0.50/1M prompt, $9.00/1M output audio tokens)
     cost_tts = tracker.calculate_cost(
-        model_name="gemini-3.1-flash-tts-preview",
+        model_name="gemini-3.8-flash-tts",
         prompt_tokens=500,
         output_tokens=1500,
         audio_duration_seconds=10.0,
     )
-    # 500 * 1.00/1M = 0.0005 + 1500 * 20.0/1M = 0.030 -> $0.0305
-    expected_tts = 0.0005 + 0.030
+    # 500 * 0.50/1M = 0.00025 + 1500 * 9.0/1M = 0.0135 -> $0.01375
+    expected_tts = 0.00025 + 0.0135
     assert cost_tts == pytest.approx(expected_tts, rel=1e-4)
 
 

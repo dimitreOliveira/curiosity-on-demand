@@ -22,7 +22,22 @@ class Settings(BaseSettings):
     gemini_api_key: str = Field(
         default="",
         alias="GEMINI_API_KEY",
-        description="Google Gemini API key",
+        description="Google Gemini API key (or Vertex AI Express Mode API key)",
+    )
+    gemini_use_vertexai: bool = Field(
+        default=False,
+        alias="GEMINI_USE_VERTEXAI",
+        description="Whether to route Gemini API requests through Vertex AI endpoints",
+    )
+    google_cloud_project: str = Field(
+        default="",
+        alias="GOOGLE_CLOUD_PROJECT",
+        description="Google Cloud project ID or number for Vertex AI requests",
+    )
+    google_cloud_location: str = Field(
+        default="global",
+        alias="GOOGLE_CLOUD_LOCATION",
+        description="Google Cloud location/region for Vertex AI requests (e.g., global, us-central1)",
     )
     gemini_model: str = Field(
         default="gemini-3.7-flash",

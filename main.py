@@ -61,11 +61,21 @@ def log_startup_diagnostics(settings: Settings) -> None:
     Args:
         settings: Application settings containing model names and credentials.
     """
+    if settings.gemini_use_vertexai:
+        loc_info = (
+            f"{settings.google_cloud_project}/{settings.google_cloud_location}"
+            if settings.google_cloud_project
+            else "express"
+        )
+        backend_name = f"Vertex AI [{loc_info}]"
+    else:
+        backend_name = "Gemini Developer API"
     logger.info(
-        "Using Gemini Model: %s (Research: %s, TTS: %s)",
+        "Using Gemini Model: %s (Research: %s, TTS: %s, Backend: %s)",
         settings.gemini_model,
         settings.research_model,
         settings.tts_model,
+        backend_name,
     )
 
     # Detect FFmpeg binary availability

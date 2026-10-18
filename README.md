@@ -144,6 +144,10 @@ cp .env.example .env
 Edit `.env` and configure:
 ```dotenv
 GEMINI_API_KEY=your_gemini_api_key
+# Optional: Set to true if using a Vertex AI API key (Express Mode)
+GEMINI_USE_VERTEXAI=false
+GOOGLE_CLOUD_PROJECT=
+GOOGLE_CLOUD_LOCATION=global
 TELEGRAM_BOT_TOKEN=your_telegram_bot_token
 
 # Optional: Concurrency tuning (adjust to your machine/quota)

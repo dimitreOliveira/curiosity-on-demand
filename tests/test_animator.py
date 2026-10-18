@@ -250,3 +250,107 @@ async def test_scene_animator_animate_storyboard_vertical(
     assert call_kwargs["is_vertical"] is True
     assert call_kwargs["width"] == 1080
     assert call_kwargs["height"] == 1920
+
+
+@pytest.mark.asyncio
+async def test_scene_animator_cross_scene_context_and_compositional_assignment(
+    mock_settings, sample_script, sample_animation_style
+):
+    """Test SceneAnimatorAgent injects cross-scene context, assigned composition, and delta-time instructions."""
+    from core.models import SceneVisualDirection
+
+    style_with_directions = sample_animation_style.model_copy(deep=True)
+    style_with_directions.scene_directions = [
+        SceneVisualDirection(
+            scene_number=1,
+            composition_type="Wide Panoramic Establishing Shot",
+            camera_movement="Slow dolly in",
+            focal_subject="Mechanical Light Switch",
+            transition_hook="Morph switch into glowing sphere",
+        ),
+        SceneVisualDirection(
+            scene_number=2,
+            composition_type="Split-Screen Visual Comparison",
+            camera_movement="Balanced dual pan",
+            focal_subject="Entangled Qubits",
+            transition_hook="Bridge from Bloch sphere to twin entangled particles",
+        ),
+    ]
+
+    agent = SceneAnimatorAgent(settings=mock_settings)
+    mock_resp = MagicMock()
+    mock_resp.text = (
+        "<!DOCTYPE html><html><body><canvas id='stage'></canvas></body></html>"
+    )
+    agent.client.aio.models.generate_content = AsyncMock(return_value=mock_resp)
+
+    res = await agent.animate_scene(
+        topic="How Quantum Computers Work",
+        scene=sample_script.scenes[1],
+        style=style_with_directions,
+        duration_seconds=18.45,
+        previous_scene=sample_script.scenes[0],
+        next_scene=sample_script.scenes[2],
+        total_scenes=3,
+    )
+
+    assert res.scene_number == 2
+    assert res.duration_seconds == 18.45
+    assert "Split-Screen Visual Comparison" in (res.notes or "")
+
+    call_args = agent.client.aio.models.generate_content.call_args
+    prompt_used = call_args[1].get("contents", "")
+    assert "Split-Screen Visual Comparison" in prompt_used
+    assert "Previous Scene (Scene 1 - 'The Light Switch Dilemma')" in prompt_used
+    assert (
+        "Wide Panoramic Establishing Shot — DO NOT repeat this exact layout"
+        in prompt_used
+    )
+    assert "Next Scene (Scene 3 - 'The Quantum Horizon')" in prompt_used
+    assert "const DURATION = 18.45;" in prompt_used
+
+
+@pytest.mark.asyncio
+async def test_scene_animator_storyboard_uses_synthesized_audio_durations(
+    mock_settings,
+    sample_script,
+    sample_animation_style,
+    sample_narration_storyboard,
+):
+    """Test animate_storyboard calibrates each scene animation to exact synthesized TTS audio durations."""
+    agent = SceneAnimatorAgent(settings=mock_settings)
+
+    # Set distinct synthesized durations on narration_storyboard
+    sample_narration_storyboard.scenes_audio[0].duration_seconds = 14.25
+    sample_narration_storyboard.scenes_audio[1].duration_seconds = 19.80
+    sample_narration_storyboard.scenes_audio[2].duration_seconds = 16.50
+    sample_narration_storyboard.total_duration_seconds = 50.55
+
+    async def fake_animate_scene(**kwargs):
+        s = kwargs["scene"]
+        return SceneAnimation(
+            scene_number=s.scene_number,
+            title=s.title,
+            html_content="<!DOCTYPE html><html><body><canvas></canvas></body></html>",
+            duration_seconds=kwargs["duration_seconds"],
+        )
+
+    agent.animate_scene = AsyncMock(side_effect=fake_animate_scene)
+
+    storyboard = await agent.animate_storyboard(
+        topic="How Quantum Computers Work",
+        script=sample_script,
+        style=sample_animation_style,
+        narration_storyboard=sample_narration_storyboard,
+    )
+
+    assert len(storyboard.scenes) == 3
+    assert storyboard.scenes[0].duration_seconds == 14.25
+    assert storyboard.scenes[1].duration_seconds == 19.80
+    assert storyboard.scenes[2].duration_seconds == 16.50
+
+    # Verify adjacent scenes were passed to Scene 2
+    scene_2_call = agent.animate_scene.call_args_list[1][1]
+    assert scene_2_call["previous_scene"].scene_number == 1
+    assert scene_2_call["next_scene"].scene_number == 3
+    assert scene_2_call["total_scenes"] == 3
