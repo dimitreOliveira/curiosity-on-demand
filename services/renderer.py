@@ -69,6 +69,19 @@ DETERMINISTIC_TIME_SHIM = """
 """
 
 
+# Performance & hardware-rasterization flags for headless Chromium canvas rendering.
+CHROMIUM_LAUNCH_ARGS: tuple[str, ...] = (
+    "--disable-dev-shm-usage",
+    "--enable-gpu-rasterization",
+    "--enable-zero-copy",
+    "--ignore-gpu-blocklist",
+    "--disable-renderer-backgrounding",
+    "--disable-background-timer-throttling",
+    "--disable-backgrounding-occluded-windows",
+    "--disable-ipc-flooding-protection",
+)
+
+
 class AnimationRenderer:
     """Renders HTML5 Canvas and SVG animations to image snapshots and MP4 video clips."""
 
@@ -82,7 +95,7 @@ class AnimationRenderer:
         output_image_path: Path,
         width: int | None = None,
         height: int | None = None,
-        wait_ms: int = 600,
+        wait_ms: int = 0,
         duration_seconds: float | None = None,
         sample_progress: float = 0.55,
     ) -> Path:
@@ -110,7 +123,10 @@ class AnimationRenderer:
         )
 
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
+            browser = await p.chromium.launch(
+                headless=True,
+                args=list(CHROMIUM_LAUNCH_ARGS),
+            )
             try:
                 page = await browser.new_page(
                     viewport={"width": w, "height": h},
@@ -129,7 +145,12 @@ class AnimationRenderer:
                     )
                 if wait_ms > 0:
                     await page.wait_for_timeout(wait_ms)
-                await page.screenshot(path=str(output_image_path), full_page=False)
+                await page.screenshot(
+                    path=str(output_image_path),
+                    full_page=False,
+                    animations="allow",
+                    caret="hide",
+                )
             finally:
                 await browser.close()
 
@@ -151,7 +172,7 @@ class AnimationRenderer:
         fps: int,
         audio_path: Path | None = None,
     ) -> Path:
-        """Deterministically step HTML canvas frames and encode directly to MP4 via lossless PNG pipe (with optional single-pass audio mux)."""
+        """Deterministically step HTML canvas frames and encode directly to MP4 via Q100 MJPEG pipe (with optional single-pass audio mux)."""
         native_duration = max(0.1, float(duration_seconds))
         valid_audio = (
             audio_path
@@ -180,14 +201,14 @@ class AnimationRenderer:
 
         total_frames = max(1, round(target_duration * fps))
 
-        # Build single-pass FFmpeg command reading deterministic lossless PNG frames from image2pipe stdin
+        # Build single-pass FFmpeg command reading deterministic Q100 JPEG frames from image2pipe stdin
         cmd = [
             self.ffmpeg_path,
             "-y",
             "-f",
             "image2pipe",
             "-vcodec",
-            "png",
+            "mjpeg",
             "-framerate",
             str(fps),
             "-i",
@@ -204,7 +225,7 @@ class AnimationRenderer:
                 "-c:v",
                 "libx264",
                 "-preset",
-                "medium",
+                "fast",
                 "-tune",
                 "animation",
                 "-crf",
@@ -239,22 +260,41 @@ class AnimationRenderer:
                 stderr=asyncio.subprocess.PIPE,
             )
 
-            try:
-                for frame_idx in range(total_frames):
-                    if total_frames > 1:
-                        virtual_time_ms = (
-                            (frame_idx / float(total_frames)) * native_duration * 1000.0
-                        )
-                    else:
-                        virtual_time_ms = 0.0
+            def _frame_time_ms(idx: int) -> float:
+                if total_frames > 1:
+                    return (idx / float(total_frames)) * native_duration * 1000.0
+                return 0.0
 
-                    await page.evaluate(f"window.__stepVirtualFrame({virtual_time_ms})")
+            try:
+                # Step initial frame (idx=0) before entering capture loop
+                await page.evaluate(f"window.__stepVirtualFrame({_frame_time_ms(0)})")
+
+                for frame_idx in range(total_frames):
                     frame_bytes = await page.screenshot(
-                        type="png",
+                        type="jpeg",
+                        quality=100,
                         full_page=False,
+                        animations="allow",
+                        caret="hide",
                     )
                     if proc.stdin is not None:
                         proc.stdin.write(frame_bytes)
+
+                    if frame_idx + 1 < total_frames:
+                        next_time_ms = _frame_time_ms(frame_idx + 1)
+                        if proc.stdin is not None:
+                            # Overlap stepping the next virtual frame in Chromium with draining FFmpeg stdin pipe
+                            await asyncio.gather(
+                                page.evaluate(
+                                    f"window.__stepVirtualFrame({next_time_ms})"
+                                ),
+                                proc.stdin.drain(),
+                            )
+                        else:
+                            await page.evaluate(
+                                f"window.__stepVirtualFrame({next_time_ms})"
+                            )
+                    elif proc.stdin is not None:
                         await proc.stdin.drain()
             except BrokenPipeError:
                 logger.warning(
@@ -325,7 +365,10 @@ class AnimationRenderer:
             )
 
         async with async_playwright() as p:
-            local_browser = await p.chromium.launch(headless=True)
+            local_browser = await p.chromium.launch(
+                headless=True,
+                args=list(CHROMIUM_LAUNCH_ARGS),
+            )
             try:
                 return await self._record_and_transcode(
                     browser=local_browser,
@@ -438,7 +481,10 @@ class AnimationRenderer:
             results = await asyncio.gather(*tasks)
         else:
             async with async_playwright() as p:
-                shared_browser = await p.chromium.launch(headless=True)
+                shared_browser = await p.chromium.launch(
+                    headless=True,
+                    args=list(CHROMIUM_LAUNCH_ARGS),
+                )
                 try:
                     tasks = [_render_scene(scene, shared_browser) for scene in scenes]
                     results = await asyncio.gather(*tasks)
@@ -566,7 +612,7 @@ class AnimationRenderer:
             "-c:v",
             "libx264",
             "-preset",
-            "medium",
+            "fast",
             "-tune",
             "animation",
             "-crf",
@@ -644,7 +690,7 @@ class AnimationRenderer:
             "-c:v",
             "libx264",
             "-preset",
-            "medium",
+            "fast",
             "-tune",
             "animation",
             "-crf",
@@ -782,7 +828,7 @@ class AnimationRenderer:
                         "-c:v",
                         "libx264",
                         "-preset",
-                        "medium",
+                        "fast",
                         "-tune",
                         "animation",
                         "-crf",
@@ -903,7 +949,7 @@ class AnimationRenderer:
                         "-c:v",
                         "libx264",
                         "-preset",
-                        "medium",
+                        "fast",
                         "-tune",
                         "animation",
                         "-crf",
@@ -999,7 +1045,7 @@ class AnimationRenderer:
                     "-c:v",
                     "libx264",
                     "-preset",
-                    "medium",
+                    "fast",
                     "-tune",
                     "animation",
                     "-crf",

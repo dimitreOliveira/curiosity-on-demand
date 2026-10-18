@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from services.renderer import AnimationRenderer
+from services.renderer import CHROMIUM_LAUNCH_ARGS, AnimationRenderer
 
 
 @pytest.mark.asyncio
@@ -454,8 +454,11 @@ async def test_renderer_render_scenes_parallel_shared_browser(
         )
 
         assert len(paths) == 2
-        # Verify Chromium was launched once and closed once
-        mock_playwright.chromium.launch.assert_called_once_with(headless=True)
+        # Verify Chromium was launched once with hardware rasterization flags and closed once
+        mock_playwright.chromium.launch.assert_called_once_with(
+            headless=True,
+            args=list(CHROMIUM_LAUNCH_ARGS),
+        )
         mock_browser.close.assert_called_once()
         assert renderer._record_and_transcode.call_count == 2
 
@@ -648,16 +651,23 @@ async def test_renderer_deterministic_frame_stepping_and_single_pass_audio(
     assert mock_page.screenshot.call_count == 2
     assert mock_stdin.write.call_count == 2
 
-    # Verify FFmpeg command used lossless png image2pipe, crf 18, animation tuning, and included the audio file in a single pass
+    # Verify FFmpeg command used Q100 mjpeg image2pipe, fast preset, crf 18, animation tuning, and included the audio file in a single pass
     cmd_str = " ".join(executed_cmd)
     assert "-f image2pipe" in cmd_str
-    assert "-vcodec png" in cmd_str
+    assert "-vcodec mjpeg" in cmd_str
+    assert "-preset fast" in cmd_str
     assert "-tune animation" in cmd_str
     assert "-crf 18" in cmd_str
     assert str(sample_wav_file.resolve()) in cmd_str
     assert "-c:a aac" in cmd_str
     assert "-b:a 192k" in cmd_str
-    mock_page.screenshot.assert_called_with(type="png", full_page=False)
+    mock_page.screenshot.assert_called_with(
+        type="jpeg",
+        quality=100,
+        full_page=False,
+        animations="allow",
+        caret="hide",
+    )
 
 
 @pytest.mark.asyncio

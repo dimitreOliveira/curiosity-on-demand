@@ -219,7 +219,7 @@ class SceneNarrationPlan(BaseModel):
         description="The original voiceover narration text from the script"
     )
     enhanced_narration: str = Field(
-        description="Voiceover narration annotated with inline emotional and delivery audio tags (e.g., [excitedly], [amazed], [curious], [thoughtful], [gasp], [serious], [very fast], [sighs]). Minimize [whispers], reserving only when strictly fitting."
+        description="Voiceover narration annotated ONLY with inline angle-bracket point-in-time vocal and pause tags supported by Gemini 3.8 TTS (e.g., <short pause>, <long pause>, <gasp>, <sigh>, <sighs>, <breath>, <heavy breath>, <chuckles>, <laugh>, <throat-clearing>, <phew>). NEVER use square brackets [...] or inline tone/speed adjectives; put sustained tone and pacing in tone/pace/scene_directors_notes. Minimize <whispers>, reserving only when strictly fitting."
     )
     tone: str = Field(
         description="Emotional vibe and vocal attitude for this scene (e.g., 'Intrigued and thoughtful revelation', 'Upbeat energetic revelation')"

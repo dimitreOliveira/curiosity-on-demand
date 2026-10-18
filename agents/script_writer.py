@@ -58,13 +58,13 @@ def parse_duration_to_seconds(target_duration: str, default_seconds: int = 600) 
 
 def calculate_scene_budget(
     target_seconds: int,
-    ideal_scene_seconds: int = 20,
+    ideal_scene_seconds: int = 30,
     min_scenes: int = 4,
     max_scenes: int = 30,
 ) -> tuple[int, int, int]:
     """Calculate (min_scenes, max_scenes, target_scene_duration_seconds) for a target video duration.
 
-    Aimed at educational visual storytelling with visual cuts/scenes every 15-25 seconds.
+    Aimed at multi-act educational visual storytelling with rich 3-act scenes every 25-35 seconds.
     """
     if target_seconds <= 0:
         target_seconds = 600
@@ -89,10 +89,9 @@ Your principles:
    - Middle Scenes (The Core Journey): Walk the viewer through key mechanisms, historical context, surprising insights, and intuitive analogies based on the research. Keep the narrative progression brisk, introducing a new visual metaphor, mechanism, or perspective in each scene.
    - Final Scene (The Resolution): Deliver a memorable conclusion, profound takeaway, or philosophical perspective that ties everything together.
 2. Scene Breakdown & Dynamic Pacing (CRITICAL):
-   - In top-tier educational video channels (Kurzgesagt, Vox, Veritasium), visuals cut to new angles, diagrams, or animations every 15 to 25 seconds to maintain high viewer engagement and visual momentum.
-   - Break the narrative down into granular, focused visual scenes (each lasting approximately 15 to 25 seconds, ~25 to 40 spoken words).
-   - YOU MUST STRICTLY COMPLY with the requested Target Scene Count range. Do NOT collapse longer videos into only 3 or 4 scenes. For example, a 5-minute video MUST be budgeted across 12 to 16 distinct scenes.
-   - Spoken educational voiceover proceeds at roughly 100–120 words per minute (~1.7–2.0 words per second) to accommodate natural articulation, emphasis, and pauses. For each scene, tightly calibrate the narration word count directly to its duration_seconds (e.g., ~28–35 words for an 18–20 second scene). Do NOT exceed this word count, or the spoken audio will run longer than the budgeted scene duration.
+   - Each animated scene is rendered as a complete 3-act visual sequence (Entrance, Transformation, Climax) lasting approximately 25 to 35 seconds (~45 to 60 spoken words).
+   - YOU MUST STRICTLY COMPLY with the requested Target Scene Count range. Do NOT collapse longer videos into only 3 or 4 scenes. For example, a 5-minute video MUST be budgeted across 9 to 11 distinct scenes (~28–30s each).
+   - Spoken educational voiceover proceeds at roughly 100–120 words per minute (~1.7–2.0 words per second) to accommodate natural articulation, emphasis, and pauses. For each scene, tightly calibrate the narration word count directly to its duration_seconds (e.g., ~48–55 words for a 28–30 second scene). Do NOT exceed this word count, or the spoken audio will run longer than the budgeted scene duration.
    - For each scene, provide:
      * scene_number: Sequential integer (1, 2, 3...)
      * title: Catchy, descriptive scene title
@@ -101,8 +100,8 @@ Your principles:
        - Focal Entities & Rigging: Specific actors, diagrams, machines, or metaphors and how their components move (e.g., oscillating limbs, rotating gears, pulsing energy fields).
        - Environment & Lighting: Depth layers, background gradients, light beam sources, and color shifts.
        - Dynamic Action & Climax: Motion trajectories, particle bursts, screen shakes, cinematic title reveals, or illustrative transformations that trigger at key moments in the scene.
-     * duration_seconds: Integer estimated duration for this scene in seconds based on narration length and total target duration (budgeted at 15–25s per scene).
-     * narration: The exact, conversational, punchy voiceover script to be spoken aloud. Provide sufficient narration depth to fill the scene's duration.
+     * duration_seconds: Integer estimated duration for this scene in seconds based on narration length and total target duration (budgeted at 25–35s per scene).
+     * narration: The exact, conversational, punchy voiceover script to be spoken aloud. Provide sufficient narration depth to fill the scene's duration. Write pure spoken words only—do NOT embed bracketed stage directions like [pause] or [dramatic pause] in the base narration (vocal tags are added later by the audio director).
 3. Tone & Cadence:
    - Engaging, clear, accessible, and intellectually stimulating (in the style of Veritasium, Kurzgesagt, or 3Blue1Brown).
    - Use natural transitions between scenes to smoothly link adjacent concepts.
@@ -149,7 +148,7 @@ class ScriptWriterAgent(BaseAgent):
             f"Topic: {topic}\n"
             f"Target Video Duration: {target_duration} (~{target_seconds} seconds total)\n"
             f"Target Scene Count: Exactly {min_scenes} to {max_scenes} scenes\n"
-            f"Average Scene Duration: ~{avg_scene_dur} seconds (15–25s each)\n\n"
+            f"Average Scene Duration: ~{avg_scene_dur} seconds (25–35s each)\n\n"
             f"Research Summary:\n{research_report.summary}\n\n"
             f"Researched Subtopics & Knowledge Base:\n"
             f"{sections_text}"
@@ -169,7 +168,7 @@ class ScriptWriterAgent(BaseAgent):
                 f"PACING & SCENE BUDGET INSTRUCTIONS:\n"
                 f"- Video Duration: {target_duration} (~{target_seconds}s total)\n"
                 f"- Required Scenes: Exactly {min_scenes} to {max_scenes} distinct scenes\n"
-                f"- Duration per Scene: ~{avg_scene_dur}s (15–25s each)\n"
+                f"- Duration per Scene: ~{avg_scene_dur}s (25–35s each)\n"
                 f"===================================================\n\n"
                 f"PREVIOUS SCRIPT:\n"
                 f"Summary: {previous_script.summary}\n\n"
@@ -188,7 +187,7 @@ class ScriptWriterAgent(BaseAgent):
                 f"PACING & SCENE BUDGET INSTRUCTIONS (CRITICAL):\n"
                 f"- Video Duration: {target_duration} (~{target_seconds}s total)\n"
                 f"- Required Scenes: Exactly {min_scenes} to {max_scenes} distinct scenes\n"
-                f"- Duration per Scene: ~{avg_scene_dur}s (15–25s each, ~25–40 words of narration per scene calibrated at ~1.7–2.0 words/second)\n"
+                f"- Duration per Scene: ~{avg_scene_dur}s (25–35s each, ~45–60 words of narration per scene calibrated at ~1.7–2.0 words/second)\n"
                 f"===================================================\n\n"
                 f"Please craft a complete, engaging scene-by-scene narration Script for a {target_duration} educational video. "
                 f"Break down the topic into exactly {min_scenes} to {max_scenes} logical, visually dynamic scenes. "

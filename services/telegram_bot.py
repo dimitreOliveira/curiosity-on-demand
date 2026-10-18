@@ -39,6 +39,7 @@ from core.cost_tracker import (
 )
 from core.database import DatabaseManager, get_db_manager
 from core.models import (
+    AnimationStoryboard,
     AnimationStyle,
     NarrationPlan,
     NarrationStoryboard,
@@ -1326,7 +1327,7 @@ class TelegramBotService:
                 project_duration
             )
 
-            # Synthesize all scene voiceovers first so exact WAV durations calibrate scene animation pacing
+            # Synthesize all scene voiceovers and generate all scene HTML5 Canvas animations concurrently in parallel
             async def _synthesize_voiceover() -> NarrationStoryboard | None:
                 if not narration_plan:
                     return existing_narration_sb
@@ -1350,36 +1351,31 @@ class TelegramBotService:
                         concurrency=self.settings.tts_concurrency,
                     )
 
-            narration_storyboard = await _synthesize_voiceover()
+            async def _generate_animations() -> AnimationStoryboard:
+                with track_component(project_id, PipelineComponent.SCENE_ANIMATION):
+                    return await self.animator.animate_storyboard(
+                        topic=topic,
+                        script=script,
+                        style=style,
+                        sample_scene_1=sample_scene_1,
+                        narration_storyboard=existing_narration_sb,
+                        concurrency=self.settings.animation_concurrency,
+                        width=video_width,
+                        height=video_height,
+                        is_vertical=is_vertical,
+                        total_video_duration=project_duration,
+                    )
+
+            narration_storyboard, storyboard = await asyncio.gather(
+                _synthesize_voiceover(),
+                _generate_animations(),
+            )
 
             if narration_storyboard:
                 await self.db.save_narration_storyboard(
                     project_id=project_id,
                     storyboard=narration_storyboard,
                     final_audio_path=narration_storyboard.full_audio_path,
-                )
-
-            scene_durations_map: dict[int, float] | None = None
-            if narration_storyboard and narration_storyboard.scenes_audio:
-                scene_durations_map = {
-                    s_audio.scene_number: s_audio.duration_seconds
-                    for s_audio in narration_storyboard.scenes_audio
-                    if s_audio.duration_seconds and s_audio.duration_seconds > 0
-                }
-
-            with track_component(project_id, PipelineComponent.SCENE_ANIMATION):
-                storyboard = await self.animator.animate_storyboard(
-                    topic=topic,
-                    script=script,
-                    style=style,
-                    sample_scene_1=sample_scene_1,
-                    scene_durations=scene_durations_map,
-                    narration_storyboard=narration_storyboard,
-                    concurrency=self.settings.animation_concurrency,
-                    width=video_width,
-                    height=video_height,
-                    is_vertical=is_vertical,
-                    total_video_duration=project_duration,
                 )
 
             # Save HTML animation codes

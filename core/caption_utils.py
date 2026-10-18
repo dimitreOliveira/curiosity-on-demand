@@ -27,11 +27,12 @@ def format_srt_timestamp(seconds: float) -> str:
 
 
 def strip_audio_tags(text: str) -> str:
-    """Remove inline directorial audio tags (e.g. [whispers], [excitedly]) from narration text."""
+    """Remove inline directorial audio tags (e.g. <short pause>, <gasp>, [whispers]) from narration text."""
     if not text:
         return ""
-    cleaned = re.sub(r"\[[^\]]+\]", "", text)
+    cleaned = re.sub(r"\[[^\]]+\]|<[^<>]+>", "", text)
     cleaned = re.sub(r"\s+", " ", cleaned)
+    cleaned = re.sub(r" +([,.;:!?])", r"\1", cleaned)
     return cleaned.strip()
 
 

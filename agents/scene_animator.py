@@ -93,6 +93,7 @@ Audio narration plays as voiceover, so the animation is NOT subtitled. Apply the
 - Return ONLY the complete, self-contained, valid HTML document (`<!DOCTYPE html><html><head>...<style>...</style></head><body><canvas id="stage"></canvas><script>...</script></body></html>`).
 - Resolution & Canvas: Responsive HTML5 Canvas configured for target dimensions with responsive CSS (`width: 100%; height: 100%; object-fit: contain; margin: 0; overflow: hidden;`).
 - Pure Vanilla Web Technologies (Canvas 2D, SVG, Vanilla JS). NO external CDNs or external script tags.
+- **Zero Code Comments & Concise Token Efficiency (CRITICAL for generation speed):** Write ZERO JavaScript, CSS, or HTML comments (`//`, `/* */`, `<!-- -->`). Avoid verbose boilerplate, redundant helper wrappers, or unused variables. Keep the implementation compact, clean, and high-density so 100% of the output token budget goes directly toward rich visual rendering and smooth animation physics.
 """
 
 
@@ -150,7 +151,7 @@ def resolve_scene_direction(
 class SceneAnimatorAgent(BaseAgent):
     """Generates standalone executable SVG + HTML5 Canvas animations for individual script scenes."""
 
-    DEFAULT_CONCURRENCY: ClassVar[int] = 3
+    DEFAULT_CONCURRENCY: ClassVar[int] = 6
 
     def __init__(self, settings: Settings | None = None):
         cfg = settings or get_settings()
@@ -227,30 +228,26 @@ class SceneAnimatorAgent(BaseAgent):
                 f"- Framing & Composition: Compose elements across the standard widescreen canvas ({w}px width by {h}px height)."
             )
 
-        # Build cross-scene continuity context
+        # Build concise cross-scene continuity context without duplicating full adjacent scene descriptions
         continuity_lines: list[str] = []
         if previous_scene is not None:
             prev_dir = resolve_scene_direction(previous_scene, style)
             continuity_lines.append(
                 f"- Previous Scene (Scene {previous_scene.scene_number} - '{previous_scene.title}'): "
-                f"{previous_scene.summary} | Visuals: {previous_scene.description} "
+                f"Subject: {prev_dir.focal_subject} "
                 f"[Used composition: {prev_dir.composition_type} — DO NOT repeat this exact layout]"
             )
         else:
-            continuity_lines.append(
-                "- Previous Scene: None (This is the opening hook of the video — establish an unforgettable visual first impression)."
-            )
+            continuity_lines.append("- Previous Scene: None (Opening hook scene).")
 
         if next_scene is not None:
             next_dir = resolve_scene_direction(next_scene, style)
             continuity_lines.append(
                 f"- Next Scene (Scene {next_scene.scene_number} - '{next_scene.title}'): "
-                f"{next_scene.summary} [Upcoming composition: {next_dir.composition_type}]"
+                f"Subject: {next_dir.focal_subject} [Upcoming composition: {next_dir.composition_type}]"
             )
         else:
-            continuity_lines.append(
-                "- Next Scene: None (This is the final resolution scene of the video — deliver a memorable visual culmination)."
-            )
+            continuity_lines.append("- Next Scene: None (Final resolution scene).")
 
         continuity_block = "\n".join(continuity_lines)
         scene_position_str = (
@@ -268,7 +265,7 @@ class SceneAnimatorAgent(BaseAgent):
             f"- Background Tone & Atmosphere: {style.background_tone}\n"
             f"- Typography: {style.font_family}\n"
             f"- Motion & Animation Guidelines: {style.animation_guidelines}\n\n"
-            f"Scene Compositional Blueprint (MANDATORY for Compositional Diversity):\n"
+            f"Scene Compositional Blueprint:\n"
             f"- Assigned Composition Archetype: {resolved_direction.composition_type}\n"
             f"- Assigned 2D Camera Choreography: {resolved_direction.camera_movement}\n"
             f"- Primary Focal Hero Subject: {resolved_direction.focal_subject}\n"
@@ -280,7 +277,6 @@ class SceneAnimatorAgent(BaseAgent):
             f"- Title: {scene.title}\n"
             f"- Concept Summary: {scene.summary}\n"
             f"- Visual Description: {scene.description}\n"
-            f"- Spoken Narration (for pacing/context only — do NOT display on screen): {scene.narration}\n"
             f"- Exact Playback Duration: {target_duration:.2f} seconds\n"
             f"{format_spec}\n\n"
             f"Instructions:\n"
@@ -288,8 +284,8 @@ class SceneAnimatorAgent(BaseAgent):
             f"Match the visual style, color palette, background tone, and the assigned '{resolved_direction.composition_type}' composition. "
             f"Calibrate the multi-act progression (`const DURATION = {target_duration:.2f};`) to match the exact {target_duration:.2f}s duration. "
             f"Use true delta-time (`dt` in seconds) or `elapsed` (in seconds) for ALL particle velocities, oscillations, and physics updates — never use hardcoded per-frame increments. "
-            f"The canvas should feel like a premium illustrated documentary frame — open, cinematic, immersive. "
             f"Voiceover narration plays as spoken audio. Only include minimal, purposeful text (scene title, essential callouts). "
+            f"Write ZERO code comments (no //, /* */, or <!-- -->) and keep the JavaScript/Canvas code compact and free of boilerplate. "
             f"Return ONLY the executable <!DOCTYPE html> document."
         )
 

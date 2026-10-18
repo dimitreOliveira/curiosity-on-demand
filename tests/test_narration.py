@@ -12,6 +12,7 @@ from core.audio_utils import (
     convert_to_wav,
     format_duration,
     get_wav_duration,
+    normalize_inline_audio_tags,
     parse_audio_mime_type,
 )
 
@@ -93,6 +94,25 @@ def test_format_duration():
     assert format_duration(3665) == "1h 01m 05s"
 
 
+def test_normalize_inline_audio_tags():
+    """Test converting square-bracket and alias tags to Gemini 3.8 TTS angle-bracket format."""
+    text = (
+        "[whispers] Imagine a switch, [dramatic pause] pointing everywhere! "
+        "[excitedly] [gasp] That is quantum physics. [pause] [clears throat] Incredible."
+    )
+    normalized = normalize_inline_audio_tags(text)
+    assert normalized == (
+        "<whispers> Imagine a switch, <long pause> pointing everywhere! "
+        "<gasp> That is quantum physics. <short pause> <throat-clearing> Incredible."
+    )
+    assert "[dramatic pause]" not in normalized
+    assert "[excitedly]" not in normalized
+    assert (
+        normalize_inline_audio_tags("Wait... <dramatic pause> really?")
+        == "Wait... <long pause> really?"
+    )
+
+
 # ---------------------------------------------------------------------------
 # 2. NarrationPlannerAgent Tests
 # ---------------------------------------------------------------------------
@@ -124,7 +144,7 @@ async def test_narration_planner_plan_narration(
     assert plan is not None
     assert plan.voice_name == "Zephyr"
     assert len(plan.scenes) == 3
-    assert "[whispers]" in plan.scenes[0].enhanced_narration
+    assert "<whispers>" in plan.scenes[0].enhanced_narration
     assert planner.client.aio.models.generate_content.call_count == 1
 
     call_args = planner.client.aio.models.generate_content.call_args
@@ -155,12 +175,14 @@ async def test_narration_planner_minimizes_whisper_prompt(
     """Test that NarrationPlannerAgent instructs the model to minimize whisper tags."""
     from agents.narration_planner import NARRATION_PLANNER_SYSTEM_PROMPT
 
-    # Verify system prompt contains whisper minimization rule
+    # Verify system prompt contains whisper minimization rule and angle-bracket tag rule
     assert (
-        "Minimize the use of `[whisper]` / `[whispers]` tags"
+        "Minimize the use of `<whispers>` / `<whispering>`"
         in NARRATION_PLANNER_SYSTEM_PROMPT
     )
     assert "Whisper Tag Rule (IMPORTANT)" in NARRATION_PLANNER_SYSTEM_PROMPT
+    assert "<short pause>" in NARRATION_PLANNER_SYSTEM_PROMPT
+    assert "<long pause>" in NARRATION_PLANNER_SYSTEM_PROMPT
 
     planner = NarrationPlannerAgent(settings=mock_settings)
     mock_response = MagicMock()
@@ -171,7 +193,7 @@ async def test_narration_planner_minimizes_whisper_prompt(
 
     call_args = planner.client.aio.models.generate_content.call_args
     prompt_sent = call_args.kwargs["contents"]
-    assert "Minimize whisper tags ([whisper]/[whispers])" in prompt_sent
+    assert "Minimize whisper tags" in prompt_sent
 
 
 # ---------------------------------------------------------------------------
@@ -191,6 +213,15 @@ def test_narration_generator_build_speech_prompt(sample_narration_plan):
     assert scene_plan.scene_directors_notes in prompt
     assert "#### TRANSCRIPT" in prompt
     assert scene_plan.enhanced_narration in prompt
+
+    # Verify legacy square-bracket tags are automatically normalized in build_speech_prompt
+    legacy_prompt = build_speech_prompt(
+        plan=sample_narration_plan,
+        transcript="Hold on... [dramatic pause] [gasp] [excitedly] Look at that!",
+    )
+    assert "Hold on... <long pause> <gasp> Look at that!" in legacy_prompt
+    assert "[dramatic pause]" not in legacy_prompt
+    assert "[excitedly]" not in legacy_prompt
 
 
 @pytest.mark.asyncio
